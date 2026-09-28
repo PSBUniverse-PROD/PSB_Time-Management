@@ -11,7 +11,7 @@ import {
   NAVBAR_LOADER_START_EVENT,
 } from "@/shared/utils/navbar-loader";
 import { logout as ssoLogout } from "@/core/sso-client";
-import { validateRedirectUrl } from "@/core/auth/redirect-validator";
+import { isLoginPath, validateRedirectUrl } from "@/core/auth/redirect-validator";
 
 const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
 const ENV = process.env.NEXT_PUBLIC_ENV || "local";
@@ -98,7 +98,7 @@ export default function AppLayout({ children }) {
   const completionTimerRef = useRef(null);
   const resetTimerRef = useRef(null);
 
-  const isLoginPage = pathname === "/login";
+  const isLoginPage = isLoginPath(pathname);
   const isAuthenticated = Boolean(authUser);
 
   const user = useMemo(() => {

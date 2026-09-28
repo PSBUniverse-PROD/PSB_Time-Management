@@ -34,6 +34,7 @@ import {
   faFileInvoiceDollar,
   faStamp,
   faTriangleExclamation,
+  faUserClock,
 } from "@fortawesome/free-solid-svg-icons";
 
 // Module styles
@@ -53,6 +54,8 @@ import {
   loadEditReasons,
   loadEditReasonsAdmin,
   loadEmployeeHoursTargets,
+  loadManageableEmployees,
+  loadManagedEmployeeWeek,
   loadScheduleModels,
   loadTimesheetsForWeek,
   loadTimeTrackerData,
@@ -100,6 +103,9 @@ function buildNavItems(permissions) {
   }
   if (permissions.canViewApprovalsTab) {
     items.push({ key: "approvals", label: "Approvals", icon: faStamp });
+  }
+  if (permissions.canManageOthersTime) {
+    items.push({ key: "manage", label: "Manage Time For…", icon: faUserClock });
   }
   if (permissions.canViewSetupTab) {
     items.push({ key: "setup", label: "Setup", icon: faGear });
@@ -283,6 +289,76 @@ function KpiListItem({ title, meta, status, onClick }) {
 // HOOK: useLogsPage
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * The Monday–Sunday week `weekOffset` weeks from this Dallas week, with the
+ * labels the log table header shows. Shared by the Logs tab and
+ * "Manage Time For…".
+ */
+function buildWeekRange(weekOffset) {
+  const now = getAppTodayDate();
+  const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7) + Math.round(weekOffset) * 7);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+
+  const formatDate = (d) =>
+    d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+  return {
+    start: monday,
+    end: sunday,
+    label: `${monday.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${sunday.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
+    fullLabel: `Time Log for ${formatDate(monday)} - ${formatDate(sunday)}`,
+  };
+}
+
+/** Map a week's logs onto the seven day rows of the log table. */
+function buildWeekRows(weekRange, weekLogs) {
+  const monday = weekRange.start;
+  const logsByDate = new Map(weekLogs.map((log) => [log.clock_in_date, log]));
+  const today = getAppTodayStr();
+  return DAYS_OF_WEEK.map((dayName, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    const rowDate = toDateStr(date);
+    const log = logsByDate.get(rowDate);
+    return {
+      id: `day-${index}`,
+      isoDate: rowDate,
+      dayName,
+      date: date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      shortDate: date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      }),
+      isToday: rowDate === today,
+      clockedInDate: log ? formatDateDisplay(log.clock_in_date) : null,
+      clockedInTime: log ? formatTimeDisplay(log.clock_in_time) : null,
+      clockOutIsoDate: log?.clock_out_date ?? null,
+      clockedOutDate: log?.clock_out_date
+        ? formatDateDisplay(log.clock_out_date)
+        : null,
+      clockedOutTime: log?.clock_out_time
+        ? formatTimeDisplay(log.clock_out_time)
+        : null,
+      hours: log?.total_hours ?? null,
+      overtimeHours: Number(log?.overtime_hours) || 0,
+      hasData: Boolean(log),
+      logId: log?.log_id ?? null,
+    };
+  });
+}
+
 function useLogsPage(initialData, permissions) {
   const [weeklyHoursTarget, setWeeklyHoursTarget] = useState(
     Number(initialData?.weeklyHoursTarget) || 40,
@@ -354,29 +430,7 @@ function useLogsPage(initialData, permissions) {
   }, [activeNav, refreshHoursTarget]);
 
   // Compute week date range for the header
-  const weekRange = useMemo(() => {
-    const now = getAppTodayDate();
-    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
-    const monday = new Date(now);
-    monday.setHours(0, 0, 0, 0);
-    monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7) + Math.round(weekOffset) * 7);
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-
-    const formatDate = (d) =>
-      d.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      });
-
-    return {
-      start: monday,
-      end: sunday,
-      label: `${monday.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${sunday.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
-      fullLabel: `Time Log for ${formatDate(monday)} - ${formatDate(sunday)}`,
-    };
-  }, [weekOffset]);
+  const weekRange = useMemo(() => buildWeekRange(weekOffset), [weekOffset]);
 
   // The week the user is looking at right now. A refresh that lands after they
   // have moved on compares against this and throws its result away.
@@ -512,45 +566,7 @@ function useLogsPage(initialData, permissions) {
   }, [submissionStatus]);
 
   // Map the current week's logs onto the seven day rows for the table.
-  const weekRows = useMemo(() => {
-    const monday = weekRange.start;
-    const logsByDate = new Map(weekLogs.map((log) => [log.clock_in_date, log]));
-    const today = getAppTodayStr();
-    return DAYS_OF_WEEK.map((dayName, index) => {
-      const date = new Date(monday);
-      date.setDate(monday.getDate() + index);
-      const rowDate = toDateStr(date);
-      const log = logsByDate.get(rowDate);
-      return {
-        id: `day-${index}`,
-        isoDate: rowDate,
-        dayName,
-        date: date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }),
-        shortDate: date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        }),
-        isToday: rowDate === today,
-        clockedInDate: log ? formatDateDisplay(log.clock_in_date) : null,
-        clockedInTime: log ? formatTimeDisplay(log.clock_in_time) : null,
-        clockOutIsoDate: log?.clock_out_date ?? null,
-        clockedOutDate: log?.clock_out_date
-          ? formatDateDisplay(log.clock_out_date)
-          : null,
-        clockedOutTime: log?.clock_out_time
-          ? formatTimeDisplay(log.clock_out_time)
-          : null,
-        hours: log?.total_hours ?? null,
-        overtimeHours: Number(log?.overtime_hours) || 0,
-        hasData: Boolean(log),
-        logId: log?.log_id ?? null,
-      };
-    });
-  }, [weekRange, weekLogs]);
+  const weekRows = useMemo(() => buildWeekRows(weekRange, weekLogs), [weekRange, weekLogs]);
 
   const totalHours = useMemo(
     () => weekRows.reduce((total, row) => total + (Number(row.hours) || 0), 0),
@@ -1218,6 +1234,7 @@ function TimesheetSummary({
   canRecall,
   recalling,
   onRecall,
+  onBehalfOfName = null,
 }) {
   const [confirmRecall, setConfirmRecall] = useState(false);
   const periodLabel = `${weekRange.start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${weekRange.end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
@@ -1344,7 +1361,9 @@ function TimesheetSummary({
             disabled={isSubmissionLocked || submitting}
           />
           <p className="tt-summary-remarks-hint">
-            Optional notes for your manager before final submission.
+            {onBehalfOfName
+              ? `Optional notes for the approver. They will also see that you submitted this on behalf of ${onBehalfOfName}.`
+              : "Optional notes for your manager before final submission."}
           </p>
         </section>
 
@@ -1376,12 +1395,16 @@ function TimesheetSummary({
           )}
           {statusLower === "recalled" && (
             <p className="tt-summary-recall-hint is-recalled">
-              You recalled this timesheet. Update your logs, then submit it again.
+              {onBehalfOfName
+                ? "This timesheet was recalled. Update the logs, then submit it again."
+                : "You recalled this timesheet. Update your logs, then submit it again."}
             </p>
           )}
           {!isRequestor && (
             <p className="tt-summary-warning">
-              Requires the &quot;Timesheet Requestor - VA&quot; role to submit.
+              {onBehalfOfName
+                ? `${onBehalfOfName} needs the "Timesheet Requestor - VA" role before a timesheet can be submitted.`
+                : 'Requires the "Timesheet Requestor - VA" role to submit.'}
             </p>
           )}
         </div>
@@ -1414,7 +1437,7 @@ function TimesheetSummary({
           <p className="tt-recall-confirm-text">
             {statusLower === "approved"
               ? "This timesheet is already approved. Recalling it undoes the approval — you'll need to submit it again, and it will start again from the first approval step."
-              : "Your approvers won't be able to review it until you submit it again, and it will start again from the first approval step."}
+              : "Approvers won't be able to review it until it's submitted again, and it will start again from the first approval step."}
             {" "}You&apos;ll be able to edit this week&apos;s logs right away.
           </p>
         </Modal>
@@ -3262,6 +3285,416 @@ function LoadErrorScreen({ onRetry }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// MANAGE TIME FOR… (admin acting for an employee)
+// ═══════════════════════════════════════════════════════════════
+
+const EMPTY_SUBMISSION_STATUS = {
+  hasSubmission: false,
+  statusName: null,
+  submittedAt: null,
+  remarks: "",
+  canRecall: false,
+};
+
+/**
+ * One employee's week, as seen by an admin in "Manage Time For…".
+ *
+ * Business Rule:
+ * The admin can do what the employee can do on their Logs tab — edit or add
+ * entries, submit, recall — except Clock In / Clock Out. Every server call
+ * passes the employee's id; the server checks the caller is an admin and
+ * applies the same rules (locked weeks, the employee's own approver, the
+ * employee's Requestor role) as if the employee had done it.
+ */
+function useManagedEmployeeWeek(employeeId) {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [weekLogs, setWeekLogs] = useState([]);
+  const [weeklyHoursTarget, setWeeklyHoursTarget] = useState(40);
+  const [schedule, setSchedule] = useState(null);
+  const [isRequestor, setIsRequestor] = useState(false);
+  const [weekLoading, setWeekLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [submissionStatus, setSubmissionStatus] = useState(EMPTY_SUBMISSION_STATUS);
+  const [remarks, setRemarks] = useState("");
+  const [submittingTimesheet, setSubmittingTimesheet] = useState(false);
+  const [recallingTimesheet, setRecallingTimesheet] = useState(false);
+  const [missedWeeks, setMissedWeeks] = useState([]);
+
+  const weekRange = useMemo(() => buildWeekRange(weekOffset), [weekOffset]);
+  const weekRows = useMemo(() => buildWeekRows(weekRange, weekLogs), [weekRange, weekLogs]);
+
+  // The employee and week being shown right now. A load that finishes after
+  // the admin has switched to someone else (or another week) is dropped.
+  const currentKey = `${employeeId || ""}|${toDateStr(weekRange.start)}`;
+  const currentKeyRef = useRef(currentKey);
+  currentKeyRef.current = currentKey;
+
+  // Each employee starts on this week with a blank draft.
+  useEffect(() => {
+    setWeekOffset(0);
+    setRemarks("");
+  }, [employeeId]);
+
+  const refreshMissedWeeks = useCallback(async () => {
+    if (!employeeId) {
+      setMissedWeeks([]);
+      return;
+    }
+    try {
+      const weeks = await loadMissedSubmissions({
+        currentWeekStart: getCurrentWeekStartStr(),
+        targetUserId: employeeId,
+      });
+      if (currentKeyRef.current.startsWith(`${employeeId}|`)) setMissedWeeks(weeks);
+    } catch {
+      // KPI is informational — keep the last known list on failure.
+    }
+  }, [employeeId]);
+
+  useEffect(() => {
+    refreshMissedWeeks();
+  }, [refreshMissedWeeks]);
+
+  /** Load the week's logs, Summary details, and submission status together. */
+  const loadWeek = useCallback(async () => {
+    if (!employeeId) return;
+    const key = `${employeeId}|${toDateStr(weekRange.start)}`;
+    const weekStart = toDateStr(weekRange.start);
+    const weekEnd = toDateStr(weekRange.end);
+
+    setWeekLoading(true);
+    try {
+      const [data, status] = await Promise.all([
+        loadManagedEmployeeWeek(employeeId, weekStart, weekEnd),
+        loadWeekSubmissionStatus(weekStart, employeeId),
+      ]);
+      if (currentKeyRef.current !== key) return;
+
+      if (data.status !== "ok") {
+        setWeekLogs([]);
+        toastError(data.error || "Unable to load this employee's time logs.", "Manage Time");
+        return;
+      }
+      setWeekLogs(data.logs || []);
+      setWeeklyHoursTarget(Number(data.weeklyHoursTarget) || 40);
+      setSchedule(data.schedule ?? null);
+      setIsRequestor(Boolean(data.isRequestor));
+      setSubmissionStatus(status);
+      setRemarks(status.remarks || "");
+    } catch {
+      if (currentKeyRef.current === key) {
+        toastError("Unable to load this employee's time logs.", "Manage Time");
+      }
+    } finally {
+      if (currentKeyRef.current === key) setWeekLoading(false);
+    }
+  }, [employeeId, weekRange]);
+
+  useEffect(() => {
+    setWeekLogs([]);
+    setSubmissionStatus(EMPTY_SUBMISSION_STATUS);
+    loadWeek();
+  }, [loadWeek]);
+
+  const refreshWeek = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([loadWeek(), refreshMissedWeeks()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing, loadWeek, refreshMissedWeeks]);
+
+  const isSubmissionLocked = useMemo(() => {
+    const name = String(submissionStatus.statusName || "").toLowerCase();
+    return submissionStatus.hasSubmission && (name === "pending" || name === "approved");
+  }, [submissionStatus]);
+
+  const totalHours = useMemo(
+    () => weekRows.reduce((total, row) => total + (Number(row.hours) || 0), 0),
+    [weekRows],
+  );
+  const overtimeHours = useMemo(
+    () => weekRows.reduce((total, row) => total + row.overtimeHours, 0),
+    [weekRows],
+  );
+  const regularHours = Math.max(totalHours - overtimeHours, 0);
+
+  const handleSaveEdit = useCallback(async (formData) => {
+    const result = await saveTimeLogEntryAction({ ...formData, targetUserId: employeeId });
+    if (result.success) {
+      setWeekLogs((prev) => {
+        const exists = prev.some((l) => l.log_id === result.record.log_id);
+        return exists
+          ? prev.map((l) => (l.log_id === result.record.log_id ? result.record : l))
+          : [...prev, result.record];
+      });
+      toastSuccess("Time entry saved.", "Manage Time");
+      // An entry on a past week can add it to the "Unsubmitted Weeks" KPI.
+      refreshMissedWeeks();
+    } else {
+      toastError(result.error || "Failed to save time entry.", "Manage Time");
+    }
+    return result;
+  }, [employeeId, refreshMissedWeeks]);
+
+  const refreshSubmissionStatus = useCallback(async () => {
+    const weekStart = toDateStr(weekRange.start);
+    const key = `${employeeId}|${weekStart}`;
+    const refreshed = await loadWeekSubmissionStatus(weekStart, employeeId);
+    if (currentKeyRef.current === key) setSubmissionStatus(refreshed);
+  }, [employeeId, weekRange]);
+
+  const handleSubmitTimesheet = useCallback(async () => {
+    if (!employeeId || submittingTimesheet || isSubmissionLocked) return;
+    if (!isRequestor) {
+      toastWarning(
+        'This employee needs the "Timesheet Requestor - VA" org role to submit a timesheet.',
+        "Submit Timesheet",
+      );
+      return;
+    }
+    setSubmittingTimesheet(true);
+    try {
+      const result = await submitTimesheetAction({
+        weekStartDate: toDateStr(weekRange.start),
+        weekEndDate: toDateStr(weekRange.end),
+        remarks,
+        targetUserId: employeeId,
+      });
+      if (result.success) {
+        toastSuccess("Timesheet submitted for approval.", "Manage Time");
+        await refreshSubmissionStatus();
+        refreshMissedWeeks();
+      } else {
+        toastError(result.error || "Failed to submit timesheet.", "Manage Time");
+      }
+    } catch (err) {
+      console.error("submitTimesheet (on behalf) failed:", err);
+      toastError("Something went wrong. Please try again.", "Manage Time");
+    } finally {
+      setSubmittingTimesheet(false);
+    }
+  }, [employeeId, submittingTimesheet, isSubmissionLocked, isRequestor, weekRange, remarks, refreshSubmissionStatus, refreshMissedWeeks]);
+
+  const handleRecallTimesheet = useCallback(async () => {
+    if (!employeeId || recallingTimesheet) return false;
+    setRecallingTimesheet(true);
+    try {
+      const result = await recallTimesheetAction({
+        weekStartDate: toDateStr(weekRange.start),
+        targetUserId: employeeId,
+      });
+      // Refreshed on failure too, so an approver's action shows right away.
+      await refreshSubmissionStatus();
+      if (result.success) {
+        toastSuccess("Timesheet recalled. You can now edit the logs and submit again.", "Manage Time");
+        refreshMissedWeeks();
+        return true;
+      }
+      toastError(result.error || "Failed to recall the timesheet.", "Manage Time");
+      return false;
+    } catch (err) {
+      console.error("recallTimesheet (on behalf) failed:", err);
+      toastError("Something went wrong. Please try again.", "Manage Time");
+      return false;
+    } finally {
+      setRecallingTimesheet(false);
+    }
+  }, [employeeId, recallingTimesheet, weekRange, refreshSubmissionStatus, refreshMissedWeeks]);
+
+  return {
+    weekOffset,
+    weekRange,
+    weekRows,
+    goPreviousWeek: () => setWeekOffset((prev) => prev - 1),
+    goNextWeek: () => setWeekOffset((prev) => prev + 1),
+    goThisWeek: () => setWeekOffset(0),
+    goToWeekOfDate: (dateStr) => setWeekOffset(computeWeekOffsetFromToday(dateStr)),
+    weekLoading,
+    refreshing,
+    refreshWeek,
+    missedWeeks,
+    totalHours,
+    regularHours,
+    overtimeHours,
+    weeklyHoursTarget,
+    schedule,
+    isRequestor,
+    submissionStatus,
+    remarks,
+    setRemarks,
+    isSubmissionLocked,
+    submittingTimesheet,
+    handleSubmitTimesheet,
+    recallingTimesheet,
+    handleRecallTimesheet,
+    handleSaveEdit,
+  };
+}
+
+/**
+ * Admin-only tab: pick an employee who has a work schedule, then manage their
+ * week exactly as they would on their own Logs tab (minus Clock In/Out).
+ */
+function ManageTimeForPage() {
+  const [employees, setEmployees] = useState([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(true);
+  const [employeeId, setEmployeeId] = useState("");
+  const [editingRow, setEditingRow] = useState(null);
+  const [missedModalOpen, setMissedModalOpen] = useState(false);
+
+  const reloadEmployees = useCallback(async () => {
+    setLoadingEmployees(true);
+    try {
+      const rows = await loadManageableEmployees();
+      setEmployees(rows);
+      // Drop the selection if that employee no longer has a schedule.
+      setEmployeeId((prev) => (rows.some((row) => String(row.user_id) === prev) ? prev : ""));
+    } catch {
+      toastError("Unable to load employees.", "Manage Time");
+    } finally {
+      setLoadingEmployees(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadEmployees();
+  }, [reloadEmployees]);
+
+  const employee = employees.find((row) => String(row.user_id) === employeeId) || null;
+  const week = useManagedEmployeeWeek(employee ? employee.user_id : null);
+  const workedDays = week.weekRows.filter((row) => row.hasData).length;
+
+  return (
+    <>
+      <main className="tt-main">
+        <div className="tt-manage-bar">
+          <div className="tt-manage-bar-text">
+            <h2 className="tt-manage-title">Manage Time For…</h2>
+            <p className="tt-manage-subtitle">
+              Edit, submit, or recall an employee&apos;s timesheet on their behalf. Only employees with a
+              work schedule are listed.
+            </p>
+          </div>
+          <div className="tt-manage-picker">
+            <label className="tt-manage-picker-label" htmlFor="tt-manage-employee">
+              Employee
+            </label>
+            <select
+              id="tt-manage-employee"
+              className="tt-modal-select tt-manage-select"
+              value={employeeId}
+              onChange={(event) => setEmployeeId(event.target.value)}
+              disabled={loadingEmployees}
+            >
+              <option value="">
+                {loadingEmployees
+                  ? "Loading employees..."
+                  : employees.length
+                    ? "Select an employee"
+                    : "No employees with a work schedule"}
+              </option>
+              {employees.map((row) => (
+                <option key={row.user_id} value={String(row.user_id)}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+            <RefreshButton onClick={reloadEmployees} loading={loadingEmployees} label="Refresh employee list" />
+          </div>
+        </div>
+
+        {employee ? (
+          <TimeLogTable
+            weekRange={week.weekRange}
+            weekRows={week.weekRows}
+            onPrevWeek={week.goPreviousWeek}
+            onNextWeek={week.goNextWeek}
+            onThisWeek={week.goThisWeek}
+            onPickWeek={week.goToWeekOfDate}
+            weekOffset={week.weekOffset}
+            loading={week.weekLoading}
+            onEdit={setEditingRow}
+            onRefresh={week.refreshWeek}
+            refreshing={week.refreshing}
+            headerExtra={
+              week.missedWeeks.length > 0 ? (
+                <KpiButton
+                  count={week.missedWeeks.length}
+                  label={week.missedWeeks.length === 1 ? "unsubmitted week" : "unsubmitted weeks"}
+                  onClick={() => setMissedModalOpen(true)}
+                />
+              ) : null
+            }
+          />
+        ) : (
+          <p className="tt-manage-empty">
+            Select an employee to view and manage their time logs.
+          </p>
+        )}
+      </main>
+
+      {employee && (
+        <TimesheetSummary
+          weekRange={week.weekRange}
+          totalHours={week.totalHours}
+          regularHours={week.regularHours}
+          overtimeHours={week.overtimeHours}
+          weeklyHoursTarget={week.weeklyHoursTarget}
+          schedule={week.schedule}
+          workedDays={workedDays}
+          submissionStatus={week.submissionStatus}
+          remarks={week.remarks}
+          onRemarksChange={week.setRemarks}
+          isRequestor={week.isRequestor}
+          isSubmissionLocked={week.isSubmissionLocked}
+          submitting={week.submittingTimesheet}
+          onSubmit={week.handleSubmitTimesheet}
+          canRecall={Boolean(week.submissionStatus.canRecall)}
+          recalling={week.recallingTimesheet}
+          onRecall={week.handleRecallTimesheet}
+          onBehalfOfName={employee.name}
+        />
+      )}
+
+      <EditEntryModal
+        row={editingRow}
+        onClose={() => setEditingRow(null)}
+        onSave={async (formData) => {
+          const result = await week.handleSaveEdit(formData);
+          if (result.success) setEditingRow(null);
+          return result;
+        }}
+      />
+
+      {missedModalOpen && employee && (
+        <Modal show onHide={() => setMissedModalOpen(false)} title={`Unsubmitted Weeks — ${employee.name}`}>
+          <p className="tt-kpi-modal-hint">
+            These past weeks have logs but haven&apos;t been submitted for approval. Pick one to open it.
+          </p>
+          <ul className="tt-kpi-list">
+            {week.missedWeeks.map((missed) => (
+              <KpiListItem
+                key={missed.weekStart}
+                title={formatWeekLabel(missed.weekStart, missed.weekEnd)}
+                meta={`${missed.daysLogged} day${missed.daysLogged === 1 ? "" : "s"} logged · ${missed.totalHours.toFixed(2)} hrs`}
+                status={missed.statusName}
+                onClick={() => {
+                  setMissedModalOpen(false);
+                  week.goToWeekOfDate(missed.weekStart);
+                }}
+              />
+            ))}
+          </ul>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 export default function TimeTrackerView({ initialData }) {
   const [roles, setRoles] = useState(initialData?.roles || []);
   const [orgRoles, setOrgRoles] = useState(initialData?.orgRoles || []);
@@ -3400,7 +3833,10 @@ export default function TimeTrackerView({ initialData }) {
         hasHoursTarget={hasHoursTarget}
       />
 
-      {/* Main Content */}
+      {/* Main Content. "Manage Time For…" renders its own main + summary panel. */}
+      {activeNav === "manage" && <ManageTimeForPage />}
+
+      {activeNav !== "manage" && (
       <main className="tt-main">
         {activeNav === "logs" && (
           <>
@@ -3435,6 +3871,7 @@ export default function TimeTrackerView({ initialData }) {
 
         {activeNav === "setup" && <AdminSetupPage />}
       </main>
+      )}
 
       {activeNav === "logs" && (
         <TimesheetSummary

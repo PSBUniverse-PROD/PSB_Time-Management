@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isLoginPath } from "@/core/auth/redirect-validator";
 
 /**
  * SSO Proxy Middleware for PSBUniverse
@@ -20,7 +21,7 @@ export function proxy(req) {
 
   // ── Bypass routes ────────────────────────────────────────────────────
   // Allow login page and API routes
-  const isLoginPage = pathname === "/login" || pathname.startsWith("/login/");
+  const isLoginPage = isLoginPath(pathname);
   const isApiRoute = pathname.startsWith("/api/");
   const isPublicAsset = pathname.includes("_next") || pathname === "/favicon.ico";
 
