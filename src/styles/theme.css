@@ -1,0 +1,21 @@
+body {
+  min-height: 100vh;
+  background: radial-gradient(circle at 10% 10%, #f8fbff, transparent 28%),
+    radial-gradient(circle at 92% 6%, #e9f2fa, transparent 24%), var(--psb-bg);
+  color: var(--psb-text);
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-shell-body {
+  min-height: calc(100vh - 70px);
+  padding: 12px;
+}
+
+@media (max-width: 960px) {
+  .app-shell-body {
+    padding: 8px;
+  }
+}

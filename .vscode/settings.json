@@ -1,0 +1,27 @@
+﻿{
+    "code-runner.runInTerminal":  true,
+    "code-runner.clearPreviousOutput":  true,
+    "code-runner.preserveFocus":  false,
+    "code-runner.executorMap":  {
+                                    "javascript":  "npm.cmd --prefix \"$workspaceRoot\" run dev",
+                                    "javascriptreact":  "npm.cmd --prefix \"$workspaceRoot\" run dev",
+                                    "typescript":  "npm.cmd --prefix \"$workspaceRoot\" run dev",
+                                    "typescriptreact":  "npm.cmd --prefix \"$workspaceRoot\" run dev",
+                                    "json":  "npm.cmd --prefix \"$workspaceRoot\" run dev",
+                                    "jsonc":  "npm.cmd --prefix \"$workspaceRoot\" run dev",
+                                    "plaintext":  "npm.cmd --prefix \"$workspaceRoot\" run dev"
+                                },
+    "chat.tools.terminal.autoApprove":  {
+                                            "Copy-Item":  true,
+                                            "Move-Item":  true,
+                                            "ForEach-Object":  true,
+                                            "Set-Content":  true
+                                        },
+    "files.readonlyInclude":  {
+                                  "**":  true
+                              },
+    "files.readonlyExclude":  {
+                                  "**/.env*":  true,
+                                  "**/src/modules/time-tracker/**":  true
+                              }
+}

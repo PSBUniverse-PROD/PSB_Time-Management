@@ -1,0 +1,46 @@
+[
+  {
+    "source": "/dashboard",
+    "destination": "/psbpages/dashboard"
+  },
+  {
+    "source": "/dashboard/:path*",
+    "destination": "/psbpages/dashboard/:path*"
+  },
+  {
+    "source": "/documentation",
+    "destination": "/psbpages/documentation"
+  },
+  {
+    "source": "/documentation/:path*",
+    "destination": "/psbpages/documentation/:path*"
+  },
+  {
+    "source": "/examples/data-table",
+    "destination": "/psbpages/examples/data-table"
+  },
+  {
+    "source": "/examples",
+    "destination": "/psbpages/examples"
+  },
+  {
+    "source": "/examples/:path*",
+    "destination": "/psbpages/examples/:path*"
+  },
+  {
+    "source": "/login",
+    "destination": "/psbpages/login"
+  },
+  {
+    "source": "/login/:path*",
+    "destination": "/psbpages/login/:path*"
+  },
+  {
+    "source": "/profile",
+    "destination": "/psbpages/profile"
+  },
+  {
+    "source": "/profile/:path*",
+    "destination": "/psbpages/profile/:path*"
+  }
+]

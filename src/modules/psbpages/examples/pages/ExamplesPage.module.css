@@ -1,0 +1,776 @@
+﻿/* -----------------------------------------------------------------------
+   Page shell
+----------------------------------------------------------------------- */
+
+.page {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* -----------------------------------------------------------------------
+   Header + primary tabs
+----------------------------------------------------------------------- */
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-bottom: 2px solid #d3e6f5;
+  padding: 16px 0 0;
+  margin-bottom: 0;
+}
+
+.headerText {
+  padding-bottom: 12px;
+}
+
+.kicker {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 700;
+  color: #4a7290;
+}
+
+.title {
+  margin: 4px 0 0;
+  font-size: clamp(20px, 2.5vw, 28px);
+  font-weight: 800;
+  line-height: 1.2;
+  color: #122e44;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #5a7385;
+}
+
+/* Primary tab bar — sits flush on the header bottom border */
+.tabBar {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+}
+
+.tab {
+  border: 0;
+  background: transparent;
+  padding: 10px 18px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #5a7a91;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: #1a4d6e;
+  border-bottom-color: #b5d3e9;
+}
+
+.tabActive {
+  color: #0f3c5c;
+  border-bottom-color: #1e6fa8;
+}
+
+/* -----------------------------------------------------------------------
+   Tab content shell
+----------------------------------------------------------------------- */
+
+.tabContent {
+  padding-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* -----------------------------------------------------------------------
+   Quick Start — step bar
+----------------------------------------------------------------------- */
+
+.stepBar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.stepTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #c9dcea;
+  border-radius: 999px;
+  background: #f5faff;
+  color: #3b6a86;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 13px 5px 8px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+
+.stepTab:hover {
+  background: #eaf4fc;
+  border-color: #aecfe8;
+}
+
+.stepTabActive {
+  background: #1e6fa8;
+  border-color: #1e6fa8;
+  color: #ffffff;
+}
+
+.stepTabActive .stepNum {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.stepNum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ddeefa;
+  color: #1b5070;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.stepLabel {
+  font-size: 13px;
+}
+
+.stepContent {
+  min-height: 280px;
+}
+
+.stepBody {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+}
+
+.stepHeading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #132e44;
+}
+
+.stepNote {
+  margin: 0;
+  font-size: 13px;
+  color: #4f6a7d;
+}
+
+.stepNext {
+  margin-top: 4px;
+}
+
+/* -----------------------------------------------------------------------
+   Example block (preview + snippet + rules)
+----------------------------------------------------------------------- */
+
+.exampleBlock {
+  border: 1px solid #d3e5f3;
+  border-radius: 10px;
+  background: #f8fcff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.exampleTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #142f45;
+}
+
+.exampleWhen {
+  margin: 0;
+  font-size: 12px;
+  color: #5a7a91;
+}
+
+.examplePreview {
+  display: grid;
+  gap: 8px;
+}
+
+.exampleRules {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: #3b5a70;
+}
+
+/* -----------------------------------------------------------------------
+   Playground layout
+----------------------------------------------------------------------- */
+
+.playgroundLayout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 800px) {
+  .playgroundLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.playgroundControls {
+  border: 1px solid #d3e5f3;
+  border-radius: 10px;
+  background: #f8fcff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  position: sticky;
+  top: 12px;
+}
+
+.playgroundTable {
+  display: grid;
+  gap: 8px;
+}
+
+.playLabel {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #5a7a91;
+}
+
+.toolbarRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.eventLogWrap {
+  border: 1px solid #d3e5f3;
+  border-radius: 10px;
+  background: #f5fbff;
+  overflow: hidden;
+}
+
+.eventLogToggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3b6a86;
+  cursor: pointer;
+  text-align: left;
+}
+
+.eventLogToggle:hover {
+  background: #edf5fc;
+}
+
+.eventPre {
+  margin: 0;
+  border-top: 1px solid #d3e5f3;
+  background: #112739;
+  color: #e9f1f8;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* -----------------------------------------------------------------------
+   Reference layout
+----------------------------------------------------------------------- */
+
+.refLayout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 700px) {
+  .refLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.refNav {
+  position: sticky;
+  top: 12px;
+  border: 1px solid #d3e5f3;
+  border-radius: 10px;
+  background: #f8fcff;
+  padding: 12px;
+  display: grid;
+  gap: 14px;
+}
+
+.refNavGroup {
+  display: grid;
+  gap: 4px;
+}
+
+.refNavGroupLabel {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 800;
+  color: #4a7290;
+}
+
+.refNavItem {
+  display: block;
+  padding: 3px 6px;
+  font-size: 13px;
+  color: #2f5a78;
+  border-radius: 6px;
+}
+
+.refDocs {
+  min-width: 0;
+}
+
+.refBody {
+  display: grid;
+  gap: 10px;
+}
+
+.playBody {
+  display: grid;
+  gap: 10px;
+}
+
+/* Bonus Playground section */
+.bonusSection {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 2px dashed #d3e5f3;
+}
+
+.bonusSectionLabel {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #1e6fa8;
+  margin: 0 0 2px;
+}
+
+.bonusSectionSub {
+  font-size: 12px;
+  color: #6b8fa8;
+  margin: 0 0 12px;
+}
+
+/* Add User form grid */
+.addUserGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 600px) {
+  .addUserGrid { grid-template-columns: 1fr; }
+}
+
+.addUserField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.addUserActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a4364;
+}
+
+.fieldRequired {
+  color: #c0392b;
+}
+
+.fieldError {
+  font-size: 11px;
+  color: #c0392b;
+  margin: 0;
+}
+
+/* Pattern toggle buttons */
+.patternToggle {
+  display: flex;
+  gap: 8px;
+}
+
+.patternBtn {
+  padding: 6px 12px;
+  border: 1px solid #d3e5f3;
+  border-radius: 6px;
+  background: #f8fcff;
+  color: #1e6fa8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.patternBtn:hover {
+  border-color: #1e6fa8;
+  background: #f0f8ff;
+}
+
+.patternBtnActive {
+  background: #1e6fa8;
+  color: #ffffff;
+  border-color: #1e6fa8;
+}
+
+/* Props table */
+.propGrid {
+  display: grid;
+  gap: 6px;
+}
+
+.propRow {
+  border: 1px solid #d8e8f3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: minmax(160px, auto) 140px 1fr;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.propLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.propName {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a4364;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.propBadge {
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.propBadgeReq {
+  background: #e8f3fe;
+  border: 1px solid #bcd6f0;
+  color: #1a5580;
+}
+
+.propBadgeOpt {
+  background: #f2f6fa;
+  border: 1px solid #d0e0ec;
+  color: #527088;
+}
+
+.propType {
+  font-size: 12px;
+  color: #5a7a91;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.propDesc {
+  font-size: 13px;
+  color: #3a5870;
+}
+
+/* Rules */
+.ruleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ruleCol {
+  border: 1px solid #d3e5f3;
+  border-radius: 8px;
+  background: #f8fcff;
+  padding: 10px;
+}
+
+.ruleHeading {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  color: #2c5570;
+}
+
+.ruleList {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: #354f63;
+}
+
+/* -----------------------------------------------------------------------
+   Accordion
+----------------------------------------------------------------------- */
+
+.accordion {
+  display: grid;
+  gap: 6px;
+}
+
+.accordionItem {
+  border: 1px solid #d3e5f3;
+  border-radius: 10px;
+  background: #f8fcff;
+}
+
+.accordionItemOpen {
+  border-color: #b8d5ec;
+  box-shadow: 0 4px 12px rgba(19, 48, 72, 0.07);
+}
+
+.accordionHeader {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a4260;
+  text-align: left;
+  cursor: pointer;
+}
+
+.accordionHeader:hover {
+  background: #eef6fc;
+}
+
+.accordionBody {
+  border-top: 1px solid #d3e5f3;
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+}
+
+/* -----------------------------------------------------------------------
+   Snippet / code
+----------------------------------------------------------------------- */
+
+.snippet {
+  display: grid;
+  gap: 0;
+}
+
+.snippetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 5px;
+}
+
+.snippetTitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #5a7a91;
+}
+
+.copyBtn {
+  border: 1px solid #c4d9eb;
+  border-radius: 6px;
+  background: #f2f8fd;
+  color: #2c6284;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: background 120ms;
+}
+
+.copyBtn:hover {
+  background: #e3f1fb;
+}
+
+.copyBtnDone {
+  border-color: #8cc9a6;
+  background: #edfaf4;
+  color: #1c6840;
+}
+
+.codeBlock {
+  margin: 0;
+  border: 1px solid #bdd3e6;
+  border-radius: 8px;
+  background: #112739;
+  color: #e9f1f8;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* -----------------------------------------------------------------------
+   Shared helpers used across tabs
+----------------------------------------------------------------------- */
+
+.formStack {
+  display: grid;
+  gap: 7px;
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.badgeRow {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* -----------------------------------------------------------------------
+   Design Tokens — color palette grid
+----------------------------------------------------------------------- */
+
+.colorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.colorSwatch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: #ffffff;
+  border: 1px solid #d8e8f3;
+  border-radius: 8px;
+}
+
+.colorBox {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
+}
+
+.colorInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* -----------------------------------------------------------------------
+   Icon library grid
+----------------------------------------------------------------------- */
+
+.iconGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.iconItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid #d8e8f3;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+  text-align: left;
+  color: #1a4364;
+}
+
+.iconItem:hover {
+  background: #eaf4fc;
+  border-color: #aecfe8;
+}
+
+.iconItemCopied {
+  background: #e8f5e9;
+  border-color: #81c784;
+}
+
+.iconName {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  color: #1a4364;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iconGroup {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: #8aa4b8;
+  flex-shrink: 0;
+}

@@ -1,0 +1,90 @@
+:root {
+  --psb-font-primary: var(--font-inter), "Inter", "Segoe UI", Tahoma, Arial, sans-serif;
+  --psb-font-secondary: var(--font-manrope), "Manrope", "Segoe UI", Tahoma, Arial, sans-serif;
+  --psb-bg: #eef3f8;
+  --psb-surface: #ffffff;
+  --psb-text: #173348;
+  --psb-muted: #4f6578;
+  --psb-border: #c8d7e4;
+  --psb-brand: #1d597f;
+  --psb-brand-2: #2b7b89;
+  --psb-gold: #c4a06b;
+  --psb-ink: #102736;
+  --psb-serif: var(--psb-font-secondary);
+  --psb-sans: var(--psb-font-primary);
+  --psb-shadow: 0 12px 32px rgba(18, 54, 83, 0.12);
+
+  /* Locked design tokens */
+  --psb-space-4: 4px;
+  --psb-space-8: 8px;
+  --psb-space-12: 12px;
+  --psb-space-16: 16px;
+  --psb-space-24: 24px;
+
+  --psb-radius-6: 6px;
+  --psb-radius-8: 8px;
+  --psb-radius-12: 12px;
+
+  --psb-font-12: 12px;
+  --psb-font-14: 14px;
+  --psb-font-16: 16px;
+
+  --psb-transition-150: 0.15s;
+  --psb-transition-200: 0.2s;
+
+  --psb-icon-16: 16px;
+  --psb-icon-20: 20px;
+  --psb-control-height: 28px;
+
+  /* Action color tokens */
+  --psb-action-add: #16A34A;
+  --psb-action-add-hover: #15803D;
+  --psb-action-add-bg: #f0fdf4;
+  --psb-action-edit: #2563EB;
+  --psb-action-edit-hover: #1D4ED8;
+  --psb-action-edit-bg: #eff6ff;
+  --psb-action-deactivate: #F59E0B;
+  --psb-action-deactivate-hover: #D97706;
+  --psb-action-deactivate-bg: #fffbeb;
+  --psb-action-delete: #DC2626;
+  --psb-action-delete-hover: #B91C1C;
+  --psb-action-delete-bg: #fef2f2;
+  --psb-action-cancel: #6B7280;
+  --psb-action-cancel-hover: #4B5563;
+  --psb-action-cancel-bg: #f3f4f6;
+  --psb-action-restore: #14B8A6;
+  --psb-action-restore-hover: #0D9488;
+  --psb-action-restore-bg: #f0fdfa;
+
+  /* Status color tokens */
+  --psb-status-active: #16A34A;
+  --psb-status-active-bg: #f0fdf4;
+  --psb-status-active-border: #bbf7d0;
+  --psb-status-completed: #16A34A;
+  --psb-status-completed-bg: #f0fdf4;
+  --psb-status-completed-border: #bbf7d0;
+  --psb-status-processing: #2563EB;
+  --psb-status-processing-bg: #eff6ff;
+  --psb-status-processing-border: #bfdbfe;
+  --psb-status-pending: #F59E0B;
+  --psb-status-pending-bg: #fffbeb;
+  --psb-status-pending-border: #fde68a;
+  --psb-status-suspended: #EA580C;
+  --psb-status-suspended-bg: #fff7ed;
+  --psb-status-suspended-border: #fed7aa;
+  --psb-status-failed: #DC2626;
+  --psb-status-failed-bg: #fef2f2;
+  --psb-status-failed-border: #fecaca;
+  --psb-status-inactive: #6B7280;
+  --psb-status-inactive-bg: #f3f4f6;
+  --psb-status-inactive-border: #d1d5db;
+  --psb-status-cancelled: #6B7280;
+  --psb-status-cancelled-bg: #f3f4f6;
+  --psb-status-cancelled-border: #d1d5db;
+  --psb-status-archived: #475569;
+  --psb-status-archived-bg: #f1f5f9;
+  --psb-status-archived-border: #cbd5e1;
+  --psb-status-draft: #7C3AED;
+  --psb-status-draft-bg: #f5f3ff;
+  --psb-status-draft-border: #ddd6fe;
+}
