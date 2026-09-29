@@ -44,7 +44,42 @@ async function getSessionUserId() {
   return session?.userId || null;
 }
 
-const TIME_TRACKER_APP_ID = 10;
+/** psb_s_application.module_key for this module (see ../index.js). */
+const TIME_TRACKER_MODULE_KEY = "time-tracker";
+
+// Resolved once per server process, then reused. app_id is NOT hardcoded
+// because it differs between environments (QAS = 10, PROD = 9).
+let cachedTimeTrackerAppId = null;
+
+/**
+ * The Time Tracker's app_id, looked up by module_key.
+ *
+ * Business Rule:
+ * Workflows, roles and workflow instances are all keyed by app_id, and each
+ * environment assigns its own ids. Looking it up by module_key keeps QAS and
+ * PROD working from the same code. Only a successful lookup is cached, so a
+ * fixed setup is picked up on the next request. Throws when the app row is
+ * missing so the problem shows in the server log instead of silently
+ * matching another app's data.
+ */
+async function getTimeTrackerAppId(supabase) {
+  if (cachedTimeTrackerAppId != null) return cachedTimeTrackerAppId;
+
+  const { data, error } = await supabase
+    .from("psb_s_application")
+    .select("app_id")
+    .eq("module_key", TIME_TRACKER_MODULE_KEY)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) throw new Error(`time tracker app id: ${describeError(error)}`);
+  if (!data?.app_id) {
+    throw new Error(`No active psb_s_application row with module_key "${TIME_TRACKER_MODULE_KEY}".`);
+  }
+
+  cachedTimeTrackerAppId = data.app_id;
+  return cachedTimeTrackerAppId;
+}
 
 /**
  * Load the Time Tracker app roles and organization roles for a user.
@@ -58,7 +93,7 @@ async function loadTimeTrackerRoles(supabase, userId) {
     .from("psb_m_userapproleaccess")
     .select("role_id")
     .eq("user_id", userId)
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("is_active", true);
   if (accessError) throw new Error(`role access: ${describeError(accessError)}`);
 
@@ -70,7 +105,7 @@ async function loadTimeTrackerRoles(supabase, userId) {
         .from("psb_s_role")
         .select("role_id, role_name, app_id, is_active")
         .in("role_id", roleIds)
-        .eq("app_id", TIME_TRACKER_APP_ID)
+        .eq("app_id", await getTimeTrackerAppId(supabase))
         .eq("is_active", true)
       : { data: [] },
     supabase
@@ -199,7 +234,7 @@ async function isWeekLocked(supabase, userId, clockInDate) {
   const { data: instance } = await supabase
     .from("wfk_t_workflowinstance")
     .select("status_id")
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("document_id", submission.submission_id)
     .maybeSingle();
 
@@ -1428,7 +1463,7 @@ export async function loadWeekSubmissionStatus(weekStartDate, targetUserId) {
   const { data: instance } = await supabase
     .from("wfk_t_workflowinstance")
     .select("instance_id, status_id, current_wfs_id, wf_id")
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("document_id", submission.submission_id)
     .maybeSingle();
 
@@ -1598,7 +1633,8 @@ export async function submitTimesheet({ weekStartDate, weekEndDate, remarks, tar
     .gte("clock_in_date", weekStartDate)
     .lte("clock_in_date", weekEndDate);
 
-  // Overtime is now per-log (time after the scheduled clock-out), not derived
+  // Overtime is now per-log (time before the scheduled clock-in or after the
+  // scheduled clock-out), not derived
   // from the weekly target, so these are summed straight from the logs.
   const round2 = (n) => Math.round(n * 100) / 100;
   const totalHours = round2((logs || []).reduce((sum, l) => sum + (Number(l.total_hours) || 0), 0));
@@ -1608,7 +1644,7 @@ export async function submitTimesheet({ weekStartDate, weekEndDate, remarks, tar
   const { data: workflow, error: workflowError } = await supabase
     .from("wfk_s_workflow")
     .select("wf_id")
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("is_active", true)
     .limit(1)
     .maybeSingle();
@@ -1690,7 +1726,7 @@ export async function submitTimesheet({ weekStartDate, weekEndDate, remarks, tar
   const { data: existingInstance } = await supabase
     .from("wfk_t_workflowinstance")
     .select("instance_id")
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("document_id", submission.submission_id)
     .maybeSingle();
 
@@ -1710,7 +1746,7 @@ export async function submitTimesheet({ weekStartDate, weekEndDate, remarks, tar
     const { data, error } = await supabase
       .from("wfk_t_workflowinstance")
       .insert({
-        app_id: TIME_TRACKER_APP_ID,
+        app_id: await getTimeTrackerAppId(supabase),
         wf_id: workflow.wf_id,
         status_id: pendingStatusId,
         current_wfs_id: firstStage.wfs_id,
@@ -1807,7 +1843,7 @@ export async function recallTimesheet({ weekStartDate, targetUserId }) {
   const { data: instance, error: instanceError } = await supabase
     .from("wfk_t_workflowinstance")
     .select("instance_id, status_id, current_wfs_id, wf_id")
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("document_id", submission.submission_id)
     .maybeSingle();
 
@@ -1956,7 +1992,7 @@ export async function loadMissedSubmissions({ currentWeekStart, targetUserId }) 
     const { data: instances } = await supabase
       .from("wfk_t_workflowinstance")
       .select("document_id, status_id")
-      .eq("app_id", TIME_TRACKER_APP_ID)
+      .eq("app_id", await getTimeTrackerAppId(supabase))
       .in("document_id", submissionIds);
 
     const statusIds = [...new Set((instances || []).map((i) => i.status_id).filter(Boolean))];
@@ -2045,7 +2081,7 @@ export async function loadTimesheetsForWeek(weekStartDate) {
     supabase
       .from("wfk_t_workflowinstance")
       .select("document_id, status_id")
-      .eq("app_id", TIME_TRACKER_APP_ID)
+      .eq("app_id", await getTimeTrackerAppId(supabase))
       .in("document_id", submissionIds),
   ]);
   const userById = new Map((users || []).map((u) => [u.user_id, u]));
@@ -2084,7 +2120,7 @@ async function checkIsAuthorizedApprover(supabase, userId, submissionId) {
   const { data: instance } = await supabase
     .from("wfk_t_workflowinstance")
     .select("instance_id")
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("document_id", submissionId)
     .maybeSingle();
   if (!instance) return false;
@@ -2121,7 +2157,7 @@ async function checkIsTimeTrackerAdmin(supabase, userId) {
     .from("psb_m_userapproleaccess")
     .select("role_id")
     .eq("user_id", userId)
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("is_active", true);
   const roleIds = [...new Set((accessRows || []).map((r) => r.role_id).filter(Boolean))];
   if (!roleIds.length) return false;
@@ -2130,7 +2166,7 @@ async function checkIsTimeTrackerAdmin(supabase, userId) {
     .from("psb_s_role")
     .select("role_name")
     .in("role_id", roleIds)
-    .eq("app_id", TIME_TRACKER_APP_ID)
+    .eq("app_id", await getTimeTrackerAppId(supabase))
     .eq("is_active", true);
   return (roles || []).some((r) => String(r.role_name || "").trim().toLowerCase() === "admin");
 }
@@ -2223,7 +2259,7 @@ export async function loadApprovalQueue(weekStartDate) {
 
   const [{ data: workflowInstances }, { data: stages }] = await Promise.all([
     instanceIds.length
-      ? supabase.from("wfk_t_workflowinstance").select("*").in("instance_id", instanceIds).eq("app_id", TIME_TRACKER_APP_ID)
+      ? supabase.from("wfk_t_workflowinstance").select("*").in("instance_id", instanceIds).eq("app_id", await getTimeTrackerAppId(supabase))
       : { data: [] },
     wfsIds.length
       ? supabase.from("wfk_s_workflowstages").select("wfs_id, stage_name").in("wfs_id", wfsIds)

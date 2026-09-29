@@ -288,16 +288,18 @@ export function summarizeScheduleDays(dayNumbers) {
  *
  * Business Rule:
  * - The schedule row used is the one for the clock-in date's weekday.
- * - Early clock-in isn't counted; hours start at the scheduled clock-in.
+ * - Regular hours start at the scheduled clock-in. Time worked before it is
+ *   overtime (see below), not regular time.
  * - Lateness is deducted by the minutes past each full hour late: 0–10 min
  *   grace, 11–45 min → 0.5 hr, 46–59 min → 1 hr (e.g. 8:40 → counts from
  *   8:30, 9:05 → from 9:00).
  * - The break only reduces counted time past the first half of the day's
  *   scheduled work hours, up to the full break length, so half days keep
  *   their full hours.
- * - Overtime = time after the scheduled clock-out in 30-minute blocks
- *   (OVERTIME_BLOCK_MINUTES), rounded down (e.g. 1h46m → 1.5). Leftover
- *   minutes aren't counted.
+ * - Overtime = time before the scheduled clock-in plus time after the
+ *   scheduled clock-out, each in 30-minute blocks (OVERTIME_BLOCK_MINUTES),
+ *   rounded down separately (e.g. 1h46m → 1.5; clocking in 7:10 for 8:00 →
+ *   0.5). Leftover minutes aren't counted. No cap.
  * - Regular time is rounded to half-hour steps by the minutes past the last
  *   full hour (0–15 down, 16–35 → .5, 36–59 up), so every day's total is a
  *   multiple of 0.5. Rest days are rounded the same way.
@@ -357,6 +359,13 @@ export function computeLogHours({ clockInDate, clockInTime, clockOutDate, clockO
   // (e.g. 8:10 → from 8:00, 8:40 → from 8:30, 8:50 → from 9:00, 9:05 → from 9:00).
   const countedInMin = shift.start + lateDeductionMinutes(inMin - shift.start);
 
+  // Early clock-in counts as overtime: time before the scheduled clock-in, in
+  // OVERTIME_BLOCK_MINUTES blocks, rounded down (e.g. 7:10 for 8:00 → 0.5).
+  // Only time actually worked before the shift counts, so a session that ends
+  // before the scheduled start is capped at its clock-out.
+  const rawEarlyMin = Math.max(Math.min(outMin, shift.start) - inMin, 0);
+  const earlyOvertimeMin = Math.floor(rawEarlyMin / OVERTIME_BLOCK_MINUTES) * OVERTIME_BLOCK_MINUTES;
+
   // Overtime is counted in OVERTIME_BLOCK_MINUTES blocks after the scheduled
   // clock-out, rounded down. Leftover minutes aren't counted at all, so
   // counting stops at the scheduled clock-out plus the full blocks.
@@ -383,8 +392,9 @@ export function computeLogHours({ clockInDate, clockInTime, clockOutDate, clockO
 
   // Overtime is already whole 30-min blocks; round only the regular part to
   // half-hour steps, so the day's total is always a multiple of 0.5.
-  const overtimeMin = overtimeBlocks * OVERTIME_BLOCK_MINUTES;
-  const regularNetMin = Math.max(countedMin - breakMin - overtimeMin, 0);
+  const lateOvertimeMin = overtimeBlocks * OVERTIME_BLOCK_MINUTES;
+  const regularNetMin = Math.max(countedMin - breakMin - lateOvertimeMin, 0);
+  const overtimeMin = earlyOvertimeMin + lateOvertimeMin;
   const totalMin = roundWorkMinutes(regularNetMin) + overtimeMin;
 
   // For display: where counting stopped, when minutes past it were dropped.

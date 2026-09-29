@@ -2,8 +2,6 @@
  * Derive Time Tracker capabilities from app and organization roles.
  */
 
-const TIME_TRACKER_APP_ID = "10";
-
 function normalizeName(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -11,7 +9,10 @@ function normalizeName(value) {
 export function getTimeTrackerPermissions(roles, orgRoles) {
   const appRoleNames = new Set(
     (Array.isArray(roles) ? roles : [])
-      .filter((role) => role && String(role.app_id) === TIME_TRACKER_APP_ID && role.is_active !== false)
+      // Roles arrive already filtered to the Time Tracker app by
+      // loadTimeTrackerRoles (server), which looks the app_id up by
+      // module_key, so no app_id check is repeated here.
+      .filter((role) => role && role.is_active !== false)
       .map((role) => normalizeName(role.role_name)),
   );
 

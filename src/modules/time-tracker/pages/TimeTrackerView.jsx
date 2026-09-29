@@ -573,7 +573,8 @@ function useLogsPage(initialData, permissions) {
     [weekRows],
   );
 
-  // Overtime is per-log (time after the scheduled clock-out), so it sums
+  // Overtime is per-log (time before the scheduled clock-in or after the
+  // scheduled clock-out), so it sums
   // straight from the logs. Regular is simply the remainder of the total.
   const overtimeHours = useMemo(
     () => weekRows.reduce((total, row) => total + row.overtimeHours, 0),
@@ -661,18 +662,35 @@ function useLogsPage(initialData, permissions) {
   const handleSaveEdit = useCallback(async (formData) => {
     const result = await saveTimeLogEntryAction(formData);
     if (result.success) {
+      const record = result.record;
       setWeekLogs((prev) => {
-        const exists = prev.some((l) => l.log_id === result.record.log_id);
+        const exists = prev.some((l) => l.log_id === record.log_id);
         return exists
-          ? prev.map((l) => (l.log_id === result.record.log_id ? result.record : l))
-          : [...prev, result.record];
+          ? prev.map((l) => (l.log_id === record.log_id ? record : l))
+          : [...prev, record];
       });
+
+      // Business Rule: keep the Clock In / Clock Out button in step with the
+      // saved entry, using the same rule the server uses on page load — an
+      // entry with no clock-out time is the open session. Without this, a
+      // manually entered Clock In left the button on "Clock In" until reload,
+      // and clicking it failed with "Already clocked in today."
+      if (!record.clock_out_time) {
+        setClockedIn(true);
+        setOpenLogId(record.log_id);
+        setLastClockIn(new Date(`${record.clock_in_date}T${record.clock_in_time}`));
+      } else if (record.log_id === openLogId) {
+        // The open session was just given a Clock Out time by hand.
+        setClockedIn(false);
+        setOpenLogId(null);
+      }
+
       toastSuccess("Time entry saved.", "Time Tracker");
     } else {
       toastError(result.error || "Failed to save time entry.", "Time Tracker");
     }
     return result;
-  }, []);
+  }, [openLogId]);
 
   const handleSubmitTimesheet = useCallback(async () => {
     if (submittingTimesheet || isSubmissionLocked) return;
@@ -1286,7 +1304,7 @@ function TimesheetSummary({
             icon={faBolt}
             iconClass="tt-summary-icon-overtime"
             label="Overtime"
-            sub="30-min blocks after scheduled clock-out"
+            sub="30-min blocks before clock-in or after clock-out"
             value={`${overtimeHours.toFixed(2)} hrs`}
             valueClass="tt-summary-value-overtime"
           />
