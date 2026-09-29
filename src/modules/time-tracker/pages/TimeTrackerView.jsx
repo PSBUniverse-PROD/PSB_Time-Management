@@ -847,6 +847,12 @@ function LoadingPanel({ message }) {
  */
 const subscribeToNothing = () => () => {};
 
+/** Tooltip / screen-reader text for each nav status dot. */
+const NAV_DOT_LABELS = {
+  pending: "Waiting for your approval",
+  waiting: "Returned or recalled, waiting on employee",
+};
+
 function Sidebar({
   currentTime,
   activeNav,
@@ -857,6 +863,7 @@ function Sidebar({
   onToggle,
   disabled,
   hasHoursTarget,
+  navDots = {},
 }) {
   // The live clock is only rendered after mount. The server and the browser
   // compute a different second, so rendering it during SSR would produce a
@@ -934,6 +941,19 @@ function Sidebar({
           >
             <FontAwesomeIcon icon={item.icon} className="tt-nav-icon" />
             {item.label}
+            {navDots[item.key]?.length > 0 && (
+              <span className="tt-nav-dots">
+                {navDots[item.key].map((dot) => (
+                  <span
+                    key={dot}
+                    className={`tt-nav-dot is-${dot}`}
+                    role="img"
+                    aria-label={NAV_DOT_LABELS[dot]}
+                    title={NAV_DOT_LABELS[dot]}
+                  />
+                ))}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -2552,7 +2572,7 @@ function ApprovalDetailPanel({ row }) {
   );
 }
 
-function ApprovalsPage() {
+function ApprovalsPage({ onFollowUpsChange }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const weekDateInputRef = useRef(null);
   const [statusTab, setStatusTab] = useState("pending");
@@ -2613,11 +2633,14 @@ function ApprovalsPage() {
    */
   const refreshFollowUps = useCallback(async () => {
     try {
-      setFollowUps(await loadApprovalFollowUps());
+      const data = await loadApprovalFollowUps();
+      setFollowUps(data);
+      // Keep the sidebar's Approvals dots in step right after approve/return.
+      onFollowUpsChange?.(data);
     } catch {
       // informational only
     }
-  }, []);
+  }, [onFollowUpsChange]);
 
   // Initial load for the KPI. Uses the same promise-callback shape as the
   // approvals table load below, so a slow response can't setState on a
@@ -2626,7 +2649,9 @@ function ApprovalsPage() {
     let cancelled = false;
     loadApprovalFollowUps()
       .then((data) => {
-        if (!cancelled) setFollowUps(data);
+        if (cancelled) return;
+        setFollowUps(data);
+        onFollowUpsChange?.(data);
       })
       .catch(() => {
         // informational only — keep the last known counts
@@ -2634,7 +2659,7 @@ function ApprovalsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [onFollowUpsChange]);
 
   const filteredRows = useMemo(() => {
     if (statusTab === "all") return rows;
@@ -3827,6 +3852,62 @@ export default function TimeTrackerView({ initialData }) {
     };
   }, [activeNav]);
 
+  // Approver follow-ups across all weeks, for the dots on the Approvals nav item.
+  const [approvalFollowUps, setApprovalFollowUps] = useState(null);
+  const canViewApprovals = permissions.canViewApprovalsTab;
+
+  /**
+   * Re-read the approver's follow-ups. Informational only, so on failure the
+   * last known dots are kept rather than flickering them away.
+   */
+  const refreshApprovalsDots = useCallback(async () => {
+    if (!canViewApprovals) return;
+    try {
+      setApprovalFollowUps(await loadApprovalFollowUps());
+    } catch {
+      // informational only
+    }
+  }, [canViewApprovals]);
+
+  // Refresh on every tab change (the dots are visible from any tab) and when
+  // the user comes back to the browser tab.
+  //
+  // This effect uses the same promise-in-effect shape as the Logs tab in
+  // useLogsPage and as ApprovalsPage, rather than calling
+  // refreshApprovalsDots() directly.
+  // react-hooks/set-state-in-effect rejects calling setState synchronously in
+  // an effect body; awaiting the server action first keeps it async. The
+  // `cancelled` flag drops a response that lands after the user has moved on.
+  useEffect(() => {
+    if (!canViewApprovals) return;
+    let cancelled = false;
+    loadApprovalFollowUps()
+      .then((data) => {
+        if (!cancelled) setApprovalFollowUps(data);
+      })
+      .catch(() => {
+        // informational only — keep the last known dots
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canViewApprovals, activeNav]);
+
+  useEffect(() => {
+    const onFocus = () => refreshApprovalsDots();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshApprovalsDots]);
+
+  // Business Rule: the two dots are independent and can both show.
+  // Red ("pending") = something is waiting for this approver.
+  // Yellow ("waiting") = something is Returned/Recalled, waiting on the employee.
+  const approvalsDots = [];
+  if (canViewApprovals && approvalFollowUps) {
+    if (approvalFollowUps.needsAction?.length) approvalsDots.push("pending");
+    if (approvalFollowUps.waitingOnEmployee?.length) approvalsDots.push("waiting");
+  }
+
   const [editingRow, setEditingRow] = useState(null);
   const workedDays = weekRows.filter((row) => row.hasData).length;
 
@@ -3849,6 +3930,7 @@ export default function TimeTrackerView({ initialData }) {
         onToggle={handleClockToggle}
         disabled={toggling}
         hasHoursTarget={hasHoursTarget}
+        navDots={{ approvals: approvalsDots }}
       />
 
       {/* Main Content. "Manage Time For…" renders its own main + summary panel. */}
@@ -3885,7 +3967,7 @@ export default function TimeTrackerView({ initialData }) {
 
         {activeNav === "timesheets" && <TimesheetsPage />}
 
-        {activeNav === "approvals" && <ApprovalsPage />}
+        {activeNav === "approvals" && <ApprovalsPage onFollowUpsChange={setApprovalFollowUps} />}
 
         {activeNav === "setup" && <AdminSetupPage />}
       </main>

@@ -2796,3 +2796,32 @@
   color: #64748b;
   background: #ffffff;
 }
+
+/* ─── Nav status dots (Approvals: red = pending, yellow = returned/recalled) */
+.tt-nav-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.tt-nav-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+.tt-nav-dot.is-pending {
+  background: #dc2626;
+}
+
+.tt-nav-dot.is-waiting {
+  background: #f59e0b;
+}
+
+.tt-nav-item.active .tt-nav-dot {
+  box-shadow: 0 0 0 2px #1e4c5c;
+}
+
