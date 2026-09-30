@@ -4,12 +4,32 @@
  *
  * Authentication flow:
  *   1. Core Portal login sets psb_session (HttpOnly) + psb_user_payload (readable)
- *   2. Both cookies scoped to .psbuniverse.com — visible to all subdomains
- *   3. Subdomains read psb_user_payload cookie directly — no cross-origin API calls
- *   4. No CORS headers needed — zero network requests for auth
+ *   2. Both cookies are scoped to .psbuniverse.com — visible to all subdomains
+ *   3. The browser sends psb_session to Core's /api/auth/introspect automatically
+ *   4. Core verifies the signature with JWT_SECRET (which never leaves Core) and
+ *      answers two questions: "who is this?" and "may they open the app I asked about?"
+ *   5. The shell trusts that answer. It never verifies tokens itself and needs no
+ *      numeric app id, no JWT secret, and no Supabase keys.
+ *
+ * Why the shell asks Core instead of reading its own cookie:
+ *   psb_user_payload is a plain readable cookie, so anyone could edit it to claim
+ *   access to any module. Introspection asks the one server that holds the signing
+ *   key, so an edited or missing cookie changes nothing. The answer is cached for a
+ *   few seconds (INTROSPECT_TTL_MS) so normal navigation costs one request rather
+ *   than one per render.
  */
 
-const MODULE_ID = process.env.NEXT_PUBLIC_MODULE_ID;
+const MODULE_KEY = (process.env.NEXT_PUBLIC_MODULE_KEY || "").trim();
+const INTROSPECT_CORE_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
+// Core resolves introspection same-origin; a module (any non-core module_key)
+// calls the core portal cross-origin with credentials.
+// Core itself: leave NEXT_PUBLIC_MODULE_KEY unset so the question is simply
+// "is this session valid?" rather than "is it valid for app X?".
+const IS_MODULE = Boolean(MODULE_KEY) && MODULE_KEY !== "psbuniverse";
+const INTROSPECT_URL =
+  (IS_MODULE ? INTROSPECT_CORE_URL : "") +
+  "/api/auth/introspect" +
+  (MODULE_KEY ? `?module=${encodeURIComponent(MODULE_KEY)}` : "");
 
 // ── Local Cookie Helpers ────────────────────────────────────────────────────
 
@@ -90,23 +110,63 @@ export function clearPSBUserPayloadCookie() {
   document.cookie = cookieStr;
 }
 
-// ── Session Validation — Local Only ────────────────────────────────────────
+// ── Verified Session via Core Introspection (single source of truth) ────────
+// CORE alone holds JWT_SECRET and verifies the signed psb_session; this returns
+// core's verified payload { userId, email, fullName, modules, roles,
+// authorizedForApp, moduleKnown, appId }. A short cache keeps it to one request
+// per navigation instead of one per render.
+let introspectCache = { at: 0, data: null };
+let introspectInFlight = null;
+const INTROSPECT_TTL_MS = 30_000;
 
-/**
- * Validate session by reading the psb_user_payload cookie locally.
- * No cross-origin API calls. No CORS. ~0ms latency.
- *
- * The cookie is set by Core Portal on login and scoped to .psbuniverse.com
- * so it's automatically available on all subdomains.
- *
- * @returns {Promise<Object|null>} Session payload { userId, email, fullName, modules, roles } or null
- */
-export async function validateSessionToken() {
-  return getPSBUserPayloadFromCookie();
+async function fetchIntrospect() {
+  try {
+    const res = await fetch(INTROSPECT_URL, {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      introspectCache = { at: Date.now(), data: null };
+      return null;
+    }
+    const data = await res.json();
+    const payload = data && data.authenticated ? data : null;
+    introspectCache = { at: Date.now(), data: payload };
+    return payload;
+  } catch {
+    // Core unreachable / transient network error: keep the last known result
+    // rather than hard-logging-out mid-session.
+    return introspectCache.data;
+  } finally {
+    introspectInFlight = null;
+  }
 }
 
 /**
- * Get the current user's session data (local-only).
+ * Return the current VERIFIED session payload from core, or null.
+ * Shape: { userId, email, fullName, modules, roles, authorizedForApp, moduleKnown, appId }
+ * @returns {Promise<Object|null>}
+ */
+export async function validateSessionToken() {
+  const now = Date.now();
+  if (introspectCache.data && now - introspectCache.at < INTROSPECT_TTL_MS) {
+    return introspectCache.data;
+  }
+  if (introspectInFlight) return introspectInFlight;
+  introspectInFlight = fetchIntrospect();
+  return introspectInFlight;
+}
+
+/**
+ * Clear the cached introspection result (e.g. on logout).
+ */
+export function clearIntrospectCache() {
+  introspectCache = { at: 0, data: null };
+  introspectInFlight = null;
+}
+
+/**
+ * Get the current user's session data (verified via core).
  * @returns {Promise<Object|null>} Session payload or null
  */
 export async function getCurrentSession() {
@@ -116,21 +176,18 @@ export async function getCurrentSession() {
 // ── Module Access ──────────────────────────────────────────────────────────
 
 /**
- * Check if the current user has access to this module.
- * The module ID is read from NEXT_PUBLIC_MODULE_ID environment variable.
- *
+ * Check if the current user may open THIS deployment's module.
+ * The decision is core's: hasModuleAccess() asks /api/auth/introspect with this
+ * deployment's NEXT_PUBLIC_MODULE_KEY and returns core's verified
+ * authorizedForApp, which core resolved against its own app registry.
  * @returns {Promise<boolean>} True if user has access to this module
  */
 export async function hasModuleAccess() {
   const session = await validateSessionToken();
-  if (!session) return false;
-
-  if (!MODULE_ID) {
-    console.warn("NEXT_PUBLIC_MODULE_ID is not configured");
-    return false;
-  }
-
-  return session.modules.includes(MODULE_ID);
+  // Core decides authorization for THIS deployment's module_key and returns it
+  // as authorizedForApp. Never re-derive from appId/modules here — that would
+  // let a caller probe a different app.
+  return Boolean(session && session.authorizedForApp === true);
 }
 
 /**
@@ -143,9 +200,9 @@ export async function hasSpecificModuleAccess(moduleId) {
   if (!moduleId) return false;
 
   const session = await validateSessionToken();
-  if (!session) return false;
+  if (!session || !Array.isArray(session.modules)) return false;
 
-  return session.modules.includes(moduleId);
+  return session.modules.map(String).includes(String(moduleId));
 }
 
 // ── Logout ──────────────────────────────────────────────────────────────────
@@ -164,8 +221,9 @@ export async function logout() {
     console.error("SSO logout error:", error);
   }
 
-  // Also clear the client-side payload cookie immediately
+  // Also clear the client-side payload cookie + cached introspection immediately
   clearPSBUserPayloadCookie();
+  clearIntrospectCache();
 }
 
 // ── Navigation ──────────────────────────────────────────────────────────────

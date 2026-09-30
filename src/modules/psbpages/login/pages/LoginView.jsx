@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Form } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEye, faEyeSlash } from "@fortawesome/free-solid-svg-icons";
 import psbLogo from "@/styles/psb_logo.png";
 import { getSupabase } from "@/core/supabase/client";
+import { useAuth } from "@/core/auth/useAuth";
 import { toastError, toastSuccess } from "@/shared/utils/toast";
 import { validateRedirectUrl } from "@/core/auth/redirect-validator";
 import {
@@ -21,6 +22,9 @@ const DEFAULT_REDIRECT = ENV === "prod" ? `${CORE_PORTAL_URL}/dashboard` : "/das
 
 // ── hook ───────────────────────────────────────────────────
 function useLogin(redirectParam) {
+  const router = useRouter();
+  const { authUser } = useAuth();
+  const [pendingRedirect, setPendingRedirect] = useState(null);
   const [email, setEmail] = useState("");
   const redirectTo = validateRedirectUrl(redirectParam, DEFAULT_REDIRECT);
   const [password, setPassword] = useState("");
@@ -30,6 +34,40 @@ function useLogin(redirectParam) {
   const [fieldErrors, setFieldErrors] = useState({ email: "", password: "" });
   const [inlineError, setInlineError] = useState("");
   const [shakeForm, setShakeForm] = useState(false);
+
+  // After a successful sign-in, navigate only once the client auth context
+  // reflects the new session, via a same-origin client transition (not a full
+  // reload). This removes the post-login flicker — the app no longer tears down
+  // and re-bootstraps, and there is no second redirect to race. Cross-origin
+  // targets still hard-navigate; a fallback timer covers a slow auth context.
+  useEffect(() => {
+    if (!pendingRedirect) return undefined;
+
+    function go(url) {
+      if (url.startsWith("/")) {
+        router.replace(url);
+        return;
+      }
+      try {
+        const target = new URL(url);
+        if (target.origin === window.location.origin) {
+          router.replace(`${target.pathname}${target.search}`);
+          return;
+        }
+      } catch {
+        // fall through to a hard navigation
+      }
+      window.location.assign(url);
+    }
+
+    if (authUser) {
+      go(pendingRedirect);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => go(pendingRedirect), 1500);
+    return () => window.clearTimeout(timer);
+  }, [pendingRedirect, authUser, router]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -87,7 +125,9 @@ function useLogin(redirectParam) {
 
       await waitForServerSession();
       toastSuccess("Welcome to PSBUniverse. You have signed in successfully.", "Sign In Success");
-      window.location.assign(redirectTo);
+      // Defer to the effect above: it navigates once the auth context is ready,
+      // using a flicker-free client transition for same-origin targets.
+      setPendingRedirect(redirectTo);
     } catch (error) {
       const message = mapLoginError(error?.message);
       setInlineError(message);

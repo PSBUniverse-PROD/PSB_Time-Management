@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Button, Card, Col, Container, Form, Modal, Row, Spinner } from "react-bootstrap";
 import { useAuth } from "@/core/auth/useAuth";
+import ImpersonatePanel from "../components/ImpersonatePanel";
 import { getSupabase } from "@/core/supabase/client";
 import { toastError, toastInfo, toastSuccess } from "@/shared/utils/toast";
 import { Badge, StatusBadge } from "@/shared/components/ui";
@@ -388,6 +389,8 @@ export default function ProfileView() {
           Your account currently has no active app assignments.
         </div>
       ) : null}
+
+      <ImpersonatePanel />
 
       <Row className="g-3 align-items-start">
         <Col lg={4} className="profile-social-col" style={{ flex: "0 0 30%", maxWidth: "30%" }}>

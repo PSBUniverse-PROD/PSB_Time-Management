@@ -1,13 +1,27 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Container, Spinner } from "react-bootstrap";
-import { useAuth } from "@/core/auth/useAuth";
-import { hasAppAccess } from "@/core/auth/access";
+import { hasModuleAccess } from "@/core/sso-client";
 
-export default function ModuleAccessGate({ appId, children }) {
-  const { roles, loading } = useAuth();
+/**
+ * Guards a module page. Access is decided by CORE: hasModuleAccess() calls
+ * /api/auth/introspect with this deployment's NEXT_PUBLIC_MODULE_KEY and returns
+ * core's verified authorizedForApp. The legacy `appId` prop is ignored (kept so
+ * existing <ModuleAccessGate appId=…> call sites still compile).
+ */
+export default function ModuleAccessGate({ children }) {
+  const [status, setStatus] = useState("checking"); // "checking" | "allowed" | "denied"
 
-  if (loading) {
+  useEffect(() => {
+    let active = true;
+    hasModuleAccess()
+      .then((ok) => { if (active) setStatus(ok ? "allowed" : "denied"); })
+      .catch(() => { if (active) setStatus("denied"); });
+    return () => { active = false; };
+  }, []);
+
+  if (status === "checking") {
     return (
       <main className="auth-loading">
         <Spinner animation="border" role="status" />
@@ -15,7 +29,7 @@ export default function ModuleAccessGate({ appId, children }) {
     );
   }
 
-  if (!hasAppAccess(roles, appId)) {
+  if (status === "denied") {
     return (
       <Container className="py-4" style={{ maxWidth: 1200 }}>
         <div className="notice-banner notice-banner-warning mb-0">

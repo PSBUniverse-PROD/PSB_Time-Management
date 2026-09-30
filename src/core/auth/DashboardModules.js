@@ -9,7 +9,6 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEnvelope, faPhone } from "@fortawesome/free-solid-svg-icons";
 import AppIcon from "@/shared/components/ui/AppIcon";
 import { useAuth } from "@/core/auth/useAuth";
-import { hasAppAccess } from "@/core/auth/access";
 import psbLogo from "@/styles/psb_logo_notitle.png";
 
 const DEFAULT_CARD_ICON = "table-cells-large";
@@ -74,13 +73,16 @@ export default function DashboardModules({ modules }) {
 
   const safeModules = useMemo(() => (Array.isArray(modules) ? modules : []), [modules]);
 
+  // `modules` is already access-filtered server-side by loadAssignedCardsFromDatabase()
+  // (real DB app/role/card checks). Do NOT re-filter against useAuth().roles here:
+  // when AuthProvider hydrates from the SSO cookie path those roles have app_id: "",
+  // which would veto every card and intermittently show "No modules assigned".
   const visibleModules = useMemo(
     () =>
       safeModules.filter(
-        (moduleDefinition) =>
-          moduleDefinition?.key && moduleDefinition?.appId && hasAppAccess(roles, moduleDefinition.appId),
+        (moduleDefinition) => moduleDefinition?.key && moduleDefinition?.appId,
       ),
-    [roles, safeModules],
+    [safeModules],
   );
 
   const groupedModules = useMemo(() => {

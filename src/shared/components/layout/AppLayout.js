@@ -234,12 +234,23 @@ export default function AppLayout({ children }) {
     }
   }, [isAuthenticated, isLoginPage, loading, router, startLoader]);
 
-  // Redirect already-authenticated users away from the login page.
-  // Uses a ref to fire only once on initial mount, avoiding a race with
-  // LoginView.jsx's own redirect after form submission.
+  // Redirect away from the login page ONLY users who were already signed in
+  // when auth first settled (they opened /login with a live session). A FRESH
+  // login is handled solely by LoginView's own client navigation — redirecting
+  // here too makes the two races and the screen flickers.
   const loginRedirectFiredRef = useRef(false);
+  const authAtFirstSettleRef = useRef(null);
   useEffect(() => {
-    if (!loading && isAuthenticated && isLoginPage && !loginRedirectFiredRef.current) {
+    if (loading) return;
+    if (authAtFirstSettleRef.current === null) {
+      authAtFirstSettleRef.current = isAuthenticated;
+    }
+    if (
+      isAuthenticated &&
+      isLoginPage &&
+      authAtFirstSettleRef.current === true &&
+      !loginRedirectFiredRef.current
+    ) {
       loginRedirectFiredRef.current = true;
       startLoader();
       const params = new URLSearchParams(window.location.search);
