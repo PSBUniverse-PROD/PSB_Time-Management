@@ -6,6 +6,7 @@ import { getSupabase, initSupabase } from "@/core/supabase/client";
 import { bootstrapAuthState } from "@/core/auth/bootstrap.actions";
 import SessionExpiryModal from "@/core/auth/SessionExpiryModal";
 import {
+  SSO_ENABLED,
   IS_MODULE,
   validateSessionToken,
   extendSession,
@@ -248,7 +249,7 @@ export default function AuthProvider({ children }) {
     }
 
     async function checkSession() {
-      if (!active || sessionEnded || renewingSession || sessionEstablishmentPendingRef.current || !hasInitializedRef.current ||
+      if (!SSO_ENABLED || !active || sessionEnded || renewingSession || sessionEstablishmentPendingRef.current || !hasInitializedRef.current ||
           !lastAuthUserIdRef.current) return;
       if (checkingSession) return;
       checkingSession = true;
@@ -408,7 +409,7 @@ export default function AuthProvider({ children }) {
       setLoading(true);
 
       try {
-        if (IS_MODULE) {
+        if (SSO_ENABLED && IS_MODULE) {
           const ssoSession = await validateSessionToken({ forceRefresh: true });
           if (!active || sessionEnded) return;
           if (ssoSession === undefined) {
@@ -459,7 +460,7 @@ export default function AuthProvider({ children }) {
 
           // ── Fallback 2: Try SSO session (psb_session cookie from Core Portal) ──
           try {
-            const ssoSession = await validateSessionToken();
+            const ssoSession = SSO_ENABLED ? await validateSessionToken() : null;
             if (ssoSession?.userId) {
               hydrateSSOState(ssoSession);
               return;
@@ -486,10 +487,11 @@ export default function AuthProvider({ children }) {
       if (!active || sessionEnded) return;
       if (event === "SIGNED_OUT" && lastAuthUserIdRef.current) {
         clearAccessTokenCookie();
-        window.setTimeout(checkSession, 0);
+        if (SSO_ENABLED) window.setTimeout(checkSession, 0);
+        else resetAuthState();
         return;
       }
-      if (IS_MODULE) return;
+      if (SSO_ENABLED && IS_MODULE) return;
       if (session?.access_token) {
         setAccessTokenCookie(session);
       } else if (event === "SIGNED_OUT") {
@@ -564,7 +566,7 @@ export default function AuthProvider({ children }) {
 
       if (document.visibilityState !== "visible") return;
       checkSession();
-      if (IS_MODULE) return;
+      if (SSO_ENABLED && IS_MODULE) return;
       if (!hasInitializedRef.current || !lastAuthUserIdRef.current) return;
       if (hiddenAt == null) return;
       const hiddenDuration = Date.now() - hiddenAt;
@@ -610,11 +612,11 @@ export default function AuthProvider({ children }) {
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    const sessionCheckInterval = window.setInterval(checkSession, 30_000);
+    const sessionCheckInterval = SSO_ENABLED ? window.setInterval(checkSession, 30_000) : null;
 
     return () => {
       active = false;
-      window.clearInterval(sessionCheckInterval);
+      if (sessionCheckInterval !== null) window.clearInterval(sessionCheckInterval);
       if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
       if (sessionWarningTimer !== null) window.clearTimeout(sessionWarningTimer);
       renewSessionRef.current = null;

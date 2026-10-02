@@ -18,8 +18,13 @@ no numeric ids and no auth secrets — they ask core.
 
 ## Module Startup And Login
 
+SSO runs only when `NEXT_PUBLIC_ENV` is `dev` or `prod`. With `local` (or an
+unset environment), the shell uses local Supabase login and bootstrap roles: no
+SSO login/logout requests, introspection, renewal, or SSO expiry timers run.
+Local module access uses the `appId` prop and existing `hasAppAccess` role checks.
+
 A modular app is a separate deployment of the shared shell, not a separate required
-sign-in. When `NEXT_PUBLIC_MODULE_KEY` is set to a non-core key, `AuthProvider`
+sign-in in dev/prod. When `NEXT_PUBLIC_MODULE_KEY` is set to a non-core key, `AuthProvider`
 initializes directly from core introspection instead of local Supabase auth or a
 module-local bootstrap action.
 
@@ -42,8 +47,8 @@ transition so they cannot reject the user before the shared cookie is created.
 Deploy the updated core, then sync **and redeploy** each modular app. Syncing source
 alone does not update an already deployed app. Each app must configure
 `NEXT_PUBLIC_MODULE_KEY` to match both its registry definition and core app record.
-For local module development, set `NEXT_PUBLIC_CORE_PORTAL_URL` to your running
-local core portal; module login is still centralized there.
+Local module development signs in on that application's own origin. The configured
+Core Portal URL is not used to authenticate local users.
 
 Run the service-free shell regression suite from the repo root:
 

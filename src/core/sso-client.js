@@ -20,6 +20,7 @@
  */
 
 const MODULE_KEY = (process.env.NEXT_PUBLIC_MODULE_KEY || "").trim();
+export const SSO_ENABLED = ["dev", "prod"].includes(process.env.NEXT_PUBLIC_ENV || "local");
 const INTROSPECT_CORE_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
 // Core resolves introspection same-origin; a module (any non-core module_key)
 // calls the core portal cross-origin with credentials.
@@ -160,6 +161,7 @@ async function fetchIntrospect() {
  * @returns {Promise<Object|null|undefined>}
  */
 export async function validateSessionToken({ forceRefresh = false } = {}) {
+  if (!SSO_ENABLED) return null;
   const now = Date.now();
   if (!forceRefresh && introspectCache.data && now - introspectCache.at < INTROSPECT_TTL_MS) {
     return introspectCache.data;
@@ -179,6 +181,7 @@ export function clearIntrospectCache() {
 }
 
 export async function extendSession() {
+  if (!SSO_ENABLED) throw new Error("SSO is disabled in local mode.");
   if (introspectInFlight) await introspectInFlight;
   const response = await fetch(RENEW_SESSION_URL, {
     method: "POST",
@@ -247,6 +250,7 @@ export async function hasSpecificModuleAccess(moduleId) {
  * Calls the logout endpoint to invalidate session in database and clear cookies.
  */
 export async function logout() {
+  if (!SSO_ENABLED) return;
   try {
     await fetch("/api/auth/logout", {
       method: "POST",
@@ -278,7 +282,7 @@ const ENV = process.env.NEXT_PUBLIC_ENV || "local";
 export function redirectToLogin(returnPath) {
   let loginUrl;
 
-  if (IS_MODULE || ENV === "prod") {
+  if (SSO_ENABLED && (IS_MODULE || ENV === "prod")) {
     // Production: use Core Portal SSO login
     loginUrl = new URL("/login", CORE_PORTAL_URL);
   } else {
@@ -289,7 +293,7 @@ export function redirectToLogin(returnPath) {
   if (returnPath) {
     const trimmed = String(returnPath || "").trim();
     if (trimmed) {
-      loginUrl.searchParams.set("redirect", IS_MODULE ? new URL(trimmed, window.location.origin).href : trimmed);
+      loginUrl.searchParams.set("redirect", SSO_ENABLED && IS_MODULE ? new URL(trimmed, window.location.origin).href : trimmed);
     }
   }
 

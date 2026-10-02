@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import * as sso from "../../src/core/sso-client.js";
 import { isLoginPath, validateRedirectUrl } from "../../src/core/auth/redirect-validator.js";
+import { hasAppAccess } from "../../src/core/auth/access.js";
 
 const require = createRequire(import.meta.url);
 const { transform, loadBindings } = require("next/dist/build/swc");
@@ -70,10 +71,10 @@ const defaultExport = (value) => ({ __esModule: true, default: value });
 const flush = async () => { for (let step = 0; step < 30; step++) await Promise.resolve(); };
 const validSession = () => ({ userId: 1, email: "sso@example.invalid", fullName: "SSO User", roles: ["role-1"], expiresAt: Date.now() + 86400000 });
 
-async function createProvider(isModule, initialSession, localUser = { id: "local-auth-user", email: "local@example.invalid" }) {
+async function createProvider(isModule, initialSession, localUser = { id: "local-auth-user", email: "local@example.invalid" }, ssoEnabled = true) {
   const runtime = createHooks(), browser = createBrowser();
   let session = initialSession, authCallback;
-  const counts = { local: 0, bootstrap: 0, signOut: 0 };
+  const counts = { local: 0, bootstrap: 0, signOut: 0, sso: 0 };
   const supabase = { auth: {
     getSession: async () => { counts.local++; return { data: { session: { access_token: "local-token" } } }; },
     getUser: async () => { counts.local++; return { data: { user: localUser } }; },
@@ -86,7 +87,7 @@ async function createProvider(isModule, initialSession, localUser = { id: "local
     "@/core/auth/SessionExpiryModal": defaultExport("ExpiryModal"),
     "@/core/supabase/client": { initSupabase() {}, getSupabase: () => supabase },
     "@/core/auth/bootstrap.actions": { bootstrapAuthState: async () => { counts.bootstrap++; return { authUser: localUser, dbUser: { email: localUser.email }, roles: [] }; } },
-    "@/core/sso-client": { ...sso, IS_MODULE: isModule, validateSessionToken: async () => session,
+    "@/core/sso-client": { ...sso, SSO_ENABLED: ssoEnabled, IS_MODULE: isModule, validateSessionToken: async () => { counts.sso++; return session; },
       clearIntrospectCache() {}, clearPSBUserPayloadCookie() {}, redirectToLogin: (target) => browser.redirects.push(target) },
   }, browser);
   const render = () => runtime.render(() => exports.default({ children: "page" }));
@@ -167,7 +168,7 @@ test("a check started before sign-in cannot reject the newly established session
   provider.cleanup();
 });
 
-async function createLayout(auth, pathname = "/login", search = "") {
+async function createLayout(auth, pathname = "/login", search = "", ssoEnabled = true) {
   const runtime = createHooks(), browser = createBrowser(pathname, search);
   const router = { replace: (target) => browser.redirects.push(target) };
   const exports = await loadComponent("src/shared/components/layout/AppLayout.js", {
@@ -179,7 +180,7 @@ async function createLayout(auth, pathname = "/login", search = "") {
     "@/core/auth/useAuth": { useAuth: () => ({ dbUser: null, roles: [], ...auth }) },
     "@/core/supabase/client": { getSupabase: () => ({ auth: { signOut: async () => {} } }) },
     "@/shared/utils/navbar-loader": { NAVBAR_LOADER_FINISH_EVENT: "finish", NAVBAR_LOADER_START_EVENT: "start" },
-    "@/core/sso-client": { IS_MODULE: true, logout: async () => {}, redirectToLogin: (target) => browser.redirects.push(target) },
+    "@/core/sso-client": { SSO_ENABLED: ssoEnabled, IS_MODULE: true, logout: async () => {}, redirectToLogin: (target) => browser.redirects.push(target) },
     "@/core/auth/redirect-validator": { isLoginPath, validateRedirectUrl },
   }, { ...browser, process: { env: { NEXT_PUBLIC_ENV: "prod" } } });
   const tree = runtime.render(() => exports.default({ children: "credentials-form" }));
@@ -223,7 +224,7 @@ test("module introspection is credentialed, bounded, and tolerates outages witho
   const session = validSession();
   const client = await loadComponent("src/core/sso-client.js", {}, {
     AbortSignal,
-    process: { env: { NEXT_PUBLIC_MODULE_KEY: "time-tracker", NEXT_PUBLIC_CORE_PORTAL_URL: "https://www.psbuniverse.com" } },
+    process: { env: { NEXT_PUBLIC_ENV: "prod", NEXT_PUBLIC_MODULE_KEY: "time-tracker", NEXT_PUBLIC_CORE_PORTAL_URL: "https://www.psbuniverse.com" } },
     fetch: async (url, options) => {
       assert.equal(url, "https://www.psbuniverse.com/api/auth/introspect?module=time-tracker");
       assert.equal(options.credentials, "include");
@@ -248,6 +249,7 @@ test("cleared introspection cache cannot be overwritten by an obsolete request",
   const session = validSession();
   const client = await loadComponent("src/core/sso-client.js", {}, {
     AbortSignal,
+    process: { env: { NEXT_PUBLIC_ENV: "prod" } },
     fetch: async () => {
       requests++;
       if (requests === 1) return new Promise((resolve) => { resolveOldResponse = resolve; });
@@ -300,10 +302,11 @@ test("login return URLs reject login loops and protocol-relative external destin
   assert.equal(validateRedirectUrl("/time-tracker?view=week", "/"), "/time-tracker?view=week");
 });
 
-async function createLogin(postOk, session) {
+async function createLogin(postOk, session, ssoEnabled = true) {
   const runtime = createHooks(), browser = createBrowser("/login", "");
   const successes = [], errors = [];
   let bootstrapChecks = 0;
+  let ssoCalls = 0;
   const exports = await loadComponent("src/modules/psbpages/login/pages/LoginView.jsx", {
     react: runtime.hooks, "react/jsx-runtime": jsxRuntime,
     "next/image": defaultExport("Image"), "next/navigation": { useRouter: () => ({ replace() {} }), useSearchParams: () => ({ get: () => null }) },
@@ -314,17 +317,17 @@ async function createLogin(postOk, session) {
     "@/core/auth/useAuth": { useAuth: () => ({ authUser: null }) },
     "@/shared/utils/toast": { toastError: (message) => errors.push(message), toastSuccess: (message) => successes.push(message) },
     "@/core/auth/redirect-validator": { validateRedirectUrl },
-    "@/core/sso-client": { clearIntrospectCache() {}, validateSessionToken: async () => session },
+    "@/core/sso-client": { SSO_ENABLED: ssoEnabled, clearIntrospectCache() {}, validateSessionToken: async () => { ssoCalls++; return session; } },
     "../data/login.data": { setAccessTokenCookie() {}, waitForServerSession: async () => { bootstrapChecks++; }, validateFields: () => ({ email: "", password: "" }), mapLoginError: (message) => message },
     "../data/login.actions": { resolveUsernameToEmail: async () => "test@example.invalid" },
-  }, { ...browser, fetch: async () => ({ ok: postOk, json: async () => ({ error: "SSO creation rejected" }) }) }, "\nexport { useLogin };\n");
+  }, { ...browser, fetch: async () => { ssoCalls++; return { ok: postOk, json: async () => ({ error: "SSO creation rejected" }) }; } }, "\nexport { useLogin };\n");
   const render = () => runtime.render(() => exports.useLogin(null));
   let login = render();
   login.handleEmailChange({ target: { value: "test@example.invalid" } });
   login.handlePasswordChange({ target: { value: "synthetic-test-password" } });
   login = render();
   await login.handleSubmit({ preventDefault() {} });
-  return { runtime, successes, errors, login: render(), bootstrapChecks };
+  return { runtime, successes, errors, login: render(), bootstrapChecks, ssoCalls };
 }
 
 test("core login does not succeed until shared session creation and cookie verification succeed", async () => {
@@ -339,4 +342,77 @@ test("core login does not succeed until shared session creation and cookie verif
   assert.equal(accepted.successes.length, 1);
   assert.equal(accepted.bootstrapChecks, 1);
   assert.ok(accepted.runtime.states[0]);
+});
+
+test("local mode uses Supabase auth and its login form without any SSO checks or timers", async () => {
+  const provider = await createProvider(true, null, { id: "local-user", email: "local@example.invalid" }, false);
+  assert.equal(provider.context().authUser.id, "local-user");
+  assert.equal(provider.counts.sso, 0);
+  assert.equal(provider.intervals.size, 0);
+  provider.event("SIGNED_OUT"); await flush();
+  assert.equal(provider.context().authUser, null);
+  assert.equal(provider.counts.sso, 0);
+  provider.cleanup();
+  const layout = await createLayout({ loading: false, authUser: null }, "/login", "", false);
+  assert.equal(layout.tree, "credentials-form");
+  assert.equal(layout.redirects.length, 0);
+  const login = await createLogin(false, null, false);
+  assert.equal(login.successes.length, 1);
+  assert.equal(login.bootstrapChecks, 1);
+  assert.equal(login.ssoCalls, 0);
+});
+
+test("SSO clients run only in dev or prod and do no network work in local", async () => {
+  for (const environment of ["local", "dev", "prod"]) {
+    let requests = 0;
+    const browser = createBrowser("/login", "");
+    const client = await loadComponent("src/core/sso-client.js", {}, {
+      ...browser, AbortSignal,
+      process: { env: { NEXT_PUBLIC_ENV: environment, NEXT_PUBLIC_MODULE_KEY: "time-tracker" } },
+      fetch: async () => { requests++; return { ok: true, json: async () => ({ ...validSession(), authenticated: true }) }; },
+    });
+    assert.equal(client.SSO_ENABLED, environment !== "local");
+    const session = await client.validateSessionToken();
+    if (environment === "local") {
+      assert.equal(session, null);
+      await client.logout();
+      await assert.rejects(client.extendSession(), /SSO is disabled/);
+      assert.equal(requests, 0);
+      client.redirectToLogin("/time-tracker");
+      assert.equal(new URL(browser.redirects[0]).origin, browser.window.location.origin);
+    } else {
+      assert.equal(session.userId, 1);
+      assert.equal(requests, 1);
+    }
+  }
+});
+
+test("local module access uses bootstrap roles without calling SSO", async () => {
+  let checks = 0;
+  const runtime = createHooks();
+  const gate = await loadComponent("src/core/auth/ModuleAccessGate.js", {
+    react: runtime.hooks, "react/jsx-runtime": jsxRuntime,
+    "react-bootstrap": { Container: "Container", Spinner: "Spinner" },
+    "@/core/sso-client": { SSO_ENABLED: false, hasModuleAccess: async () => { checks++; return false; } },
+    "@/core/auth/useAuth": { useAuth: () => ({ loading: false, authUser: { id: "local-user" }, roles: [{ app_id: "9", is_active: true }] }) },
+    "@/core/auth/access": { hasAppAccess },
+  });
+  const allowed = runtime.render(() => gate.default({ appId: 9, children: "module-page" }));
+  runtime.effects.forEach((effect) => effect());
+  assert.equal(allowed, "module-page");
+  const denied = runtime.render(() => gate.default({ appId: 8, children: "module-page" }));
+  assert.ok(!JSON.stringify(denied).includes("module-page"));
+  assert.equal(checks, 0);
+});
+
+test("local proxy does not accept an SSO cookie in place of local Supabase auth", async () => {
+  const proxy = await loadComponent("src/proxy.js", {
+    "next/server": { NextResponse: { next: () => ({ headers: new Headers() }), redirect: (url) => ({ redirect: url.href, headers: new Headers() }) } },
+    "@/core/auth/redirect-validator": { isLoginPath }, "@/core/sso-client": { SSO_ENABLED: false },
+  }, { Headers });
+  const request = (cookies) => ({ nextUrl: { clone: () => new URL("http://localhost:3010/time-tracker"), toString: () => "http://localhost:3010/time-tracker" }, cookies: { get: (name) => cookies[name] ? { value: cookies[name] } : undefined } });
+  assert.ok(proxy.proxy(request({ psb_session: "ignored-sso-cookie" })).redirect.includes("/login"));
+  const local = proxy.proxy(request({ "sb-access-token": "local-token" }));
+  assert.equal(local.redirect, undefined);
+  assert.equal(local.headers.get("X-SSO-Enabled"), "false");
 });

@@ -11,7 +11,7 @@ import {
   NAVBAR_LOADER_FINISH_EVENT,
   NAVBAR_LOADER_START_EVENT,
 } from "@/shared/utils/navbar-loader";
-import { IS_MODULE, logout as ssoLogout, redirectToLogin } from "@/core/sso-client";
+import { SSO_ENABLED, IS_MODULE, logout as ssoLogout, redirectToLogin } from "@/core/sso-client";
 import { isLoginPath, validateRedirectUrl } from "@/core/auth/redirect-validator";
 
 const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
@@ -229,9 +229,9 @@ export default function AppLayout({ children }) {
   }, [completeProgress]);
 
   useEffect(() => {
-    if (!loading && !authError && !isAuthenticated && (IS_MODULE || !isLoginPage)) {
+    if (!loading && !authError && !isAuthenticated && ((SSO_ENABLED && IS_MODULE) || !isLoginPage)) {
       startLoader();
-      if (IS_MODULE) {
+      if (SSO_ENABLED && IS_MODULE) {
         const returnPath = isLoginPage
           ? validateRedirectUrl(new URLSearchParams(window.location.search).get("redirect"), "/")
           : window.location.pathname + window.location.search;
@@ -347,7 +347,7 @@ export default function AppLayout({ children }) {
     setLogoutBusy(true);
     try {
       // Attempt universal SSO logout first
-      await ssoLogout();
+      if (SSO_ENABLED) await ssoLogout();
     } catch {
       // Ignore SSO logout failure
     }
@@ -376,7 +376,7 @@ export default function AppLayout({ children }) {
     );
   }
 
-  if ((loading && (IS_MODULE || !isLoginPage)) || (IS_MODULE && isLoginPage)) {
+  if ((loading && ((SSO_ENABLED && IS_MODULE) || !isLoginPage)) || (SSO_ENABLED && IS_MODULE && isLoginPage)) {
     return (
       <main className="auth-loading">
         <Spinner animation="border" role="status" />

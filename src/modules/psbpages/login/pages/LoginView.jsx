@@ -11,7 +11,7 @@ import { getSupabase } from "@/core/supabase/client";
 import { useAuth } from "@/core/auth/useAuth";
 import { toastError, toastSuccess } from "@/shared/utils/toast";
 import { validateRedirectUrl } from "@/core/auth/redirect-validator";
-import { clearIntrospectCache, validateSessionToken } from "@/core/sso-client";
+import { SSO_ENABLED, clearIntrospectCache, validateSessionToken } from "@/core/sso-client";
 import {
   setAccessTokenCookie, waitForServerSession, validateFields, mapLoginError,
 } from "../data/login.data";
@@ -112,7 +112,7 @@ function useLogin(redirectParam) {
       setAccessTokenCookie(data?.session);
 
       // Create SSO session — calls POST /api/auth/login to generate JWT + set psb_session cookie
-      if (data?.session?.access_token) {
+      if (SSO_ENABLED) {
         const ssoResponse = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -126,10 +126,12 @@ function useLogin(redirectParam) {
         }
       }
 
-      clearIntrospectCache();
-      const sharedSession = await validateSessionToken({ forceRefresh: true });
-      if (!sharedSession?.userId) {
-        throw new Error("Unable to verify your shared sign-in session. Please try again.");
+      if (SSO_ENABLED) {
+        clearIntrospectCache();
+        const sharedSession = await validateSessionToken({ forceRefresh: true });
+        if (!sharedSession?.userId) {
+          throw new Error("Unable to verify your shared sign-in session. Please try again.");
+        }
       }
       await waitForServerSession();
       toastSuccess("Welcome to PSBUniverse. You have signed in successfully.", "Sign In Success");

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-03 SSO Environment Gate
+
+- SSO is enabled only for `NEXT_PUBLIC_ENV=dev` or `prod`. Local mode uses Supabase login and bootstrap roles without SSO requests, redirects, renewal, or expiry timers.
+- Local module access uses existing app-role checks, and the local proxy accepts the Supabase cookie rather than an SSO cookie.
+- Added regression coverage for local bypass and hosted SSO modes. No environment values or credentials were changed.
+
+---
+
 ## 2026-10-03 SSO Validation Race Protection
 
 - Second-pass testing reproduced a delayed pre-login rejection that could clear a newly established session. Sign-in now invalidates earlier checks, and superseded checks schedule fresh verification when they finish.
