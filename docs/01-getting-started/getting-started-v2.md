@@ -109,6 +109,10 @@ Then run the sync script:
 
 > Daily rule: run `.\scripts\sync-repo.ps1` before starting feature work.
 
+Run it on `main`. Commit current work first only when you want that work pushed;
+otherwise the script saves and restores it without publishing it. See the
+[sync workflow and recovery guide](../sync-repo-test-checklist.md).
+
 ### 1.7 — Verify your remotes
 
 ```bash
@@ -356,7 +360,7 @@ These are all the commands you'll use. Run them from the project root.
 | Command | What it does |
 |---------|-------------|
 | `.\scripts\setup.ps1` | One-time setup: core remote, npm install, .env.local, VS Code readonly. Re-run after creating a new module. |
-| `\.\scripts\sync-repo.ps1` | Syncs your repo safely (origin pull + core-main update + merge + push). Run at the start of each work session. |
+| `.\scripts\sync-repo.ps1` | Fetches and merges origin/main, optionally merges core-main, then normally pushes committed work. Saves/restores uncommitted work; run on main. |
 
 ### Everyday commands
 
@@ -391,26 +395,34 @@ You never need to create or edit files under `src/app/`. The script handles it.
 
 ### Pushing your work
 
-```bash
-git add -A
+```powershell
+git status
+git add path/to/changed-file
 git commit -m "feat: add Metal Buildings list page"
-git push origin main
+.\scripts\sync-repo.ps1
 ```
+
+Review and stage the intended files before committing. Sync then merges incoming
+commits before pushing yours, so committing before pulling does not require a
+rebase or force-push. Genuine conflicts still require manual resolution.
 
 ### Syncing core updates (start of each work session)
 
-```bash
-\.\scripts\sync-repo.ps1
+```powershell
+.\scripts\sync-repo.ps1
 ```
 
 What this script does for you:
 
-1. Pulls latest `main` from `origin`
-2. Updates `core-main` from `core/main`
-3. Merges `core-main` into `main`
-4. Pushes `main` to `origin`
+1. Fetches `origin/main` and explicitly merges it into local `main`
+2. If `core` exists, refreshes the `core-main` mirror from `core/main`
+3. Merges `core-main` into `main`, or skips this step for origin-only repos
+4. Normally pushes `main` to `origin`, retrying up to three attempts when the remote advances
 
-It also auto-stashes uncommitted changes before syncing, then restores them.
+It also saves staged, unstaged, and untracked work before syncing, then restores
+it. Existing user stashes are preserved. **Uncommitted changes are not pushed**;
+commit them first when you want to publish them. The script stops on feature
+branches or unfinished Git operations instead of switching branches for you.
 
 ### If you get a merge conflict
 
@@ -421,10 +433,14 @@ It also auto-stashes uncommitted changes before syncing, then restores them.
 ```bash
 git add path/to/the/file.js
 git merge --continue
-git push origin main
 ```
 
-If you're stuck, run `git merge --abort` to undo everything and ask your senior for help.
+After completing or aborting the merge, restore saved work using the exact
+`git stash apply --index <hash>` command printed by sync, then rerun sync to
+publish committed changes. Do not reapply a stash over unresolved stash conflicts.
+See the [recovery guide](../sync-repo-test-checklist.md) for details.
+
+If you're stuck, run `git merge --abort` to undo that merge and ask your senior for help.
 
 ---
 
@@ -440,7 +456,7 @@ If you're stuck, run `git merge --abort` to undo everything and ask your senior 
 | Build fails on fresh clone | Don't fix it — tell your senior |
 | PowerShell blocks npm | Use `npm.cmd` instead |
 | `"use client"` error on Page file | Remove `"use client"` from your Page.js — only View files get that |
-| `rejected — failed to push` | Run `git pull origin main` then push again |
+| `rejected — failed to push` | Run `.\scripts\sync-repo.ps1` on `main`; it merges new remote commits before a normal push. If origin has not advanced, check permissions, branch protection, or connectivity. |
 | Can't edit my module files in VS Code | Re-run `.\scripts\setup.ps1` — it will detect your module folder and unlock it |
 | setup.ps1 says "No module folders detected" | Create your module first (`npm run create-module`), then re-run setup.ps1 |
 

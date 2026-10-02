@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026-10-03 SSO Validation Race Protection
+
+- Second-pass testing reproduced a delayed pre-login rejection that could clear a newly established session. Sign-in now invalidates earlier checks, and superseded checks schedule fresh verification when they finish.
+- Cache invalidation now prevents older introspection responses from overwriting a new verified session or clearing its in-flight request.
+- Expanded service-free regression coverage for delayed responses, cache invalidation, and missing module home routes.
+
+---
+
+## 2026-10-02 SSO-First Module Startup
+
+- Modular deployments initialize from core introspection without requiring a local Supabase login or bootstrap. Their login form stays hidden during validation and redirect.
+- Authenticated login-page visitors return to the module locally. The root resolves a declared module home route without database access; confirmed missing sessions redirect to core login with an absolute module return URL.
+- Local Supabase sign-out revalidates SSO rather than ending a valid shared session. Module-local auth events cannot replace the SSO identity.
+- Core login now requires successful SSO creation and cookie verification. Session checks pause during sign-in to avoid rejecting a session before its cookie is created.
+- Unavailable core introspection shows a retry state, with a 15-second request timeout. Redirect validation rejects protocol-relative external URLs and accepts the core apex domain.
+- Added service-free SSO shell regression tests. Modules must sync and redeploy to receive these changes.
+
+See [SSO Usage](09-sso-architecture/USAGE.md#module-startup-and-login).
+
+---
+
+## 2026-10-02 Shared File Attachments
+
+- Added `src/core/storage/files.service.js`: server-only helpers for Supabase Storage (`createSignedFileUpload`, `getSignedFileUrl`, `removeStoredFiles`, `assertFileAllowed`). They are not server actions; modules call them from their own server actions.
+- Added the shared `FileAttachments` component (`@/shared/components/ui`): list, add, open and delete files on any record. The browser uploads straight to Storage through a one-time signed upload target.
+- Modules keep their own file table and choose the bucket and folder. Core adds no database objects and no new packages.
+
+See [Shared Components — File Attachments](04-ui-system/shared-components.md#file-attachments).
+
+---
+
+## 2026-10-02 Session Lifecycle And Safer Repository Sync
+
+### Session Expiry And Renewal
+
+- The global auth provider validates SSO sessions every 30 seconds, when a tab becomes visible, and at the last verified expiry. Confirmed session loss clears local auth state and redirects to login with the current path as the return destination.
+- A global warning modal appears with 10 minutes remaining. It shows a countdown and offers **Extend for 24 hours** or **Not now**. Dismissal does not prevent expiry logout.
+- Renewal uses the existing `POST /api/auth/refresh-token` endpoint. A successful renewal inside the two-hour refresh window resets expiry to 24 hours from renewal and updates both shared cookies.
+- Renewal checks origin, signed session identity, revocation, active user status, and current roles. Database checks are read-only; existing session tracking records and the previous token are not rewritten.
+- Temporary validation outages preserve the last verified session until its known expiry. Non-authentication renewal failures show a retryable error; expired or rejected sessions require login.
+- Tabs revalidate before enforcing an old deadline so a session renewed elsewhere can remain active.
+
+See [SSO Usage](09-sso-architecture/USAGE.md) and [API Reference](09-sso-architecture/API-REFERENCE.md).
+
+### Repository Sync
+
+- Sync explicitly fetches and merges `origin/main`, preserving outgoing commit hashes even when local work was committed before pulling. It never rebases or force-pushes.
+- A configured `core` remote is mirrored into `core-main` and merged; origin-only repositories are also supported.
+- Staged, unstaged, and untracked work is saved and restored. Existing user stashes are preserved, and recovery information is shown when conflicts prevent restoration.
+- Sync retries up to three push attempts only when the remote advances. Unchanged-remote failures stop for network, permissions, or branch-protection checks.
+- Only committed work and conflict-free merge commits are pushed. Uncommitted work is restored locally; it is not automatically committed or published.
+- Eight automated local scenarios cover divergence, conflicts, saved work, fetch/push failures, concurrent remote updates, core sync, and branch preflight without contacting GitHub.
+
+See [Sync Workflow And Test Checklist](sync-repo-test-checklist.md).
+
+---
+
 ## 2026-05-11 New Page Scaffolding Script
 
 Added a `newpage` subcommand to `generate-routes.js` so developers can add a new page to an existing module with one command.

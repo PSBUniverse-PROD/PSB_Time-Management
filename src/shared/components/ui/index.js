@@ -12,6 +12,7 @@ export { default as StatusBadge } from "@/shared/components/ui/feedback/StatusBa
 export { default as Input } from "@/shared/components/ui/controls/Input";
 export { default as SearchBar } from "@/shared/components/ui/controls/SearchBar";
 export { default as GlobalToastHost } from "@/shared/components/ui/feedback/GlobalToastHost";
+export { default as FileAttachments } from "@/shared/components/ui/files/FileAttachments";
 export {
   TABLE_FILTER_TYPES,
   createFilterConfig,

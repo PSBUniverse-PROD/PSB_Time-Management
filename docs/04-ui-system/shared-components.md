@@ -849,3 +849,52 @@ Core includes wrapper components under `src/shared/components/ui`:
 - Reduce visual divergence between modules.
 
 **Migration note:** Legacy direct React-Bootstrap usage can remain during incremental migration. New code should use the shared wrappers.
+
+---
+
+## File Attachments
+
+Core provides one way to attach files to any record. Use it instead of building a module-local uploader.
+
+| Piece | Where | Owner |
+|---|---|---|
+| Storage service (signed upload, signed view link, delete, type/size checks) | `src/core/storage/files.service.js` | Core |
+| UI (list, add, open, delete) | `FileAttachments` from `@/shared/components/ui` | Core |
+| Which record a file belongs to (your file table) | Your module | Module |
+
+**Rules**
+
+1. The service functions are server-only and are NOT server actions. Call them from your module's own server actions, after your own checks.
+2. Files never go through a server action. The browser uploads straight to Supabase Storage using the one-time target from `createSignedFileUpload()`.
+3. Your module chooses the bucket and the folder (for example `projects/42`) and stores `storage_path` in its own table.
+4. When you delete a record, call `removeStoredFiles()` for its files first.
+
+**Module server actions (example)**
+
+```js
+"use server";
+import { createSignedFileUpload, getSignedFileUrl, removeStoredFiles } from "@/core/storage/files.service";
+
+const BUCKET = "my-bucket";
+
+export async function createInvoiceFileUpload(invoiceId, file) {
+  return createSignedFileUpload({ bucket: BUCKET, folder: `invoices/${invoiceId}`, file });
+}
+```
+
+**Module UI (example)**
+
+```jsx
+import { FileAttachments } from "@/shared/components/ui";
+
+<FileAttachments
+  key={invoice.id}
+  loadFiles={() => loadInvoiceFiles(invoice.id)}
+  createUpload={(meta) => createInvoiceFileUpload(invoice.id, meta)}
+  saveFile={(storagePath, meta) => saveInvoiceFile(invoice.id, storagePath, meta)}
+  getFileUrl={(file) => getInvoiceFileUrl(file.id)}
+  deleteFile={(file) => deleteInvoiceFile(file.id)}
+/>
+```
+
+Rows returned by `loadFiles` and `saveFile` need `id`, `file_name` and `file_size`. Defaults: images and PDF, 10 MB. Pass `accept` and `maxBytes` to the component, and `allowedTypes` and `maxBytes` to the service, to change them — always change both sides together.

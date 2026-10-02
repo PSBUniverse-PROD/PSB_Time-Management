@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Spinner } from "react-bootstrap";
+import Button from "@/shared/components/ui/controls/Button";
 import Header from "@/shared/components/layout/Header";
 import { useAuth } from "@/core/auth/useAuth";
 import { getSupabase } from "@/core/supabase/client";
@@ -10,7 +11,7 @@ import {
   NAVBAR_LOADER_FINISH_EVENT,
   NAVBAR_LOADER_START_EVENT,
 } from "@/shared/utils/navbar-loader";
-import { logout as ssoLogout } from "@/core/sso-client";
+import { IS_MODULE, logout as ssoLogout, redirectToLogin } from "@/core/sso-client";
 import { isLoginPath, validateRedirectUrl } from "@/core/auth/redirect-validator";
 
 const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
@@ -85,7 +86,7 @@ function shouldStartRouteLoader(event) {
 export default function AppLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { loading, authUser, dbUser, roles } = useAuth();
+  const { loading, authUser, dbUser, roles, authError } = useAuth();
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressVisible, setProgressVisible] = useState(false);
@@ -228,11 +229,18 @@ export default function AppLayout({ children }) {
   }, [completeProgress]);
 
   useEffect(() => {
-    if (!loading && !isAuthenticated && !isLoginPage) {
+    if (!loading && !authError && !isAuthenticated && (IS_MODULE || !isLoginPage)) {
       startLoader();
-      router.replace("/login");
+      if (IS_MODULE) {
+        const returnPath = isLoginPage
+          ? validateRedirectUrl(new URLSearchParams(window.location.search).get("redirect"), "/")
+          : window.location.pathname + window.location.search;
+        redirectToLogin(returnPath);
+      } else {
+        router.replace("/login");
+      }
     }
-  }, [isAuthenticated, isLoginPage, loading, router, startLoader]);
+  }, [authError, isAuthenticated, isLoginPage, loading, router, startLoader]);
 
   // Redirect away from the login page ONLY users who were already signed in
   // when auth first settled (they opened /login with a live session). A FRESH
@@ -255,13 +263,8 @@ export default function AppLayout({ children }) {
       startLoader();
       const params = new URLSearchParams(window.location.search);
       const redirectParam = params.get("redirect");
-      if (redirectParam) {
-        const fallback = IS_PRODUCTION ? `${CORE_PORTAL_URL}/dashboard` : "/dashboard";
-        const safeUrl = validateRedirectUrl(redirectParam, fallback);
-        window.location.href = safeUrl;
-      } else {
-        window.location.href = IS_PRODUCTION ? `${CORE_PORTAL_URL}/dashboard` : "/dashboard";
-      }
+      const fallback = IS_MODULE ? "/" : IS_PRODUCTION ? `${CORE_PORTAL_URL}/dashboard` : "/dashboard";
+      window.location.href = validateRedirectUrl(redirectParam, fallback);
     }
   }, [isAuthenticated, isLoginPage, loading, router, startLoader]);
 
@@ -362,7 +365,18 @@ export default function AppLayout({ children }) {
     window.location.href = IS_PRODUCTION ? `${CORE_PORTAL_URL}/login` : "/login";
   }
 
-  if (loading && !isLoginPage) {
+  if (authError) {
+    return (
+      <main className="container py-4">
+        <div className="notice-banner notice-banner-warning" role="alert">
+          <p>{authError}</p>
+          <Button onClick={() => window.location.reload()}>Retry</Button>
+        </div>
+      </main>
+    );
+  }
+
+  if ((loading && (IS_MODULE || !isLoginPage)) || (IS_MODULE && isLoginPage)) {
     return (
       <main className="auth-loading">
         <Spinner animation="border" role="status" />

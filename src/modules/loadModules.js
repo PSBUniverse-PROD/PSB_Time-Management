@@ -50,7 +50,7 @@ function createPageImporter(modulePath) {
   };
 }
 
-export async function loadModules() {
+export async function loadModules({ resolveAccess = true } = {}) {
   const modules = [];
   const seenModuleKeys = new Set();
   const modulesDir = path.join(process.cwd(), "src", "modules");
@@ -92,7 +92,7 @@ export async function loadModules() {
 
   await scanDirectory(modulesDir, entries);
 
-  await resolveAppIds(modules);
+  if (resolveAccess) await resolveAppIds(modules);
 
   return modules;
 }

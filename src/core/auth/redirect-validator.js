@@ -56,8 +56,14 @@ export function validateRedirectUrl(redirectUrl, fallbackUrl = "/dashboard") {
 
   // Allow relative paths (e.g., "/dashboard", "/gutter/dashboard"), except login pages
   if (trimmed.startsWith("/")) {
-    const relativePath = new URL(trimmed, "http://localhost").pathname;
-    return isLoginPath(relativePath) ? fallbackUrl : trimmed;
+    if (trimmed.startsWith("//")) return fallbackUrl;
+    try {
+      const relativeUrl = new URL(trimmed, "http://localhost");
+      if (relativeUrl.origin !== "http://localhost") return fallbackUrl;
+      return isLoginPath(relativeUrl.pathname) ? fallbackUrl : trimmed;
+    } catch {
+      return fallbackUrl;
+    }
   }
 
   // Only allow HTTP/HTTPS
@@ -83,7 +89,7 @@ export function validateRedirectUrl(redirectUrl, fallbackUrl = "/dashboard") {
       url.host.endsWith(suffix),
     );
 
-    if (isAllowedSuffix) {
+    if (isAllowedSuffix || url.hostname === "psbuniverse.com") {
       return trimmed;
     }
 

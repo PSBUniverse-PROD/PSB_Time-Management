@@ -10,6 +10,8 @@ Organized reference for the PSBUniverse Core platform. Start at the top and work
 - Senior dev creating a brand-new app repo from core: [Creating a New Project](01-getting-started/creating-a-new-project.md)
 - Junior dev building first feature module: [Quick Start](08-junior-dev-guide/quickstart.md)
 - Full team rules and standards: [Full Guide](08-junior-dev-guide/full-guide.md)
+- Commit, sync, and recovery workflow: [Sync Guide](sync-repo-test-checklist.md)
+- Session expiry and 24-hour renewal: [SSO Usage](09-sso-architecture/USAGE.md)
 
 ---
 
@@ -55,6 +57,12 @@ Organized reference for the PSBUniverse Core platform. Start at the top and work
 
 > Both guides reference the [Getting Started Guide](01-getting-started/getting-started-v2.md) for GitHub, environment, and dependency setup.
 
+## 9. SSO And Sessions
+
+- [SSO Usage](09-sso-architecture/USAGE.md) - Shared session validation, automatic logout, the 10-minute warning, renewal, and deployment order
+- [API Reference](09-sso-architecture/API-REFERENCE.md) - Introspection and authenticated session renewal contracts
+
 ## Reference
 
+- [Sync Workflow And Test Checklist](sync-repo-test-checklist.md) - Commit before publishing, merge incoming work, restore saved changes, and run local-only tests
 - [Changelog](CHANGELOG.md) — Release history and behavior changes

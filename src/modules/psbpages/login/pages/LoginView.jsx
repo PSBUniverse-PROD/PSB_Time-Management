@@ -11,6 +11,7 @@ import { getSupabase } from "@/core/supabase/client";
 import { useAuth } from "@/core/auth/useAuth";
 import { toastError, toastSuccess } from "@/shared/utils/toast";
 import { validateRedirectUrl } from "@/core/auth/redirect-validator";
+import { clearIntrospectCache, validateSessionToken } from "@/core/sso-client";
 import {
   setAccessTokenCookie, waitForServerSession, validateFields, mapLoginError,
 } from "../data/login.data";
@@ -23,7 +24,7 @@ const DEFAULT_REDIRECT = ENV === "prod" ? `${CORE_PORTAL_URL}/dashboard` : "/das
 // ── hook ───────────────────────────────────────────────────
 function useLogin(redirectParam) {
   const router = useRouter();
-  const { authUser } = useAuth();
+  const { authUser, beginSessionEstablishment, finishSessionEstablishment } = useAuth();
   const [pendingRedirect, setPendingRedirect] = useState(null);
   const [email, setEmail] = useState("");
   const redirectTo = validateRedirectUrl(redirectParam, DEFAULT_REDIRECT);
@@ -103,9 +104,11 @@ function useLogin(redirectParam) {
 
     const supabase = getSupabase();
 
+    beginSessionEstablishment?.();
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
       if (error) throw error;
+      if (!data?.session?.access_token) throw new Error("Unable to establish your sign-in session.");
       setAccessTokenCookie(data?.session);
 
       // Create SSO session — calls POST /api/auth/login to generate JWT + set psb_session cookie
@@ -119,10 +122,15 @@ function useLogin(redirectParam) {
         if (!ssoResponse.ok) {
           const ssoError = await ssoResponse.json().catch(() => ({}));
           console.error("SSO session creation failed:", ssoError);
-          // Continue anyway — the sb-access-token cookie may still work for the current flow
+          throw new Error(ssoError.error || "Unable to create your shared sign-in session. Please try again.");
         }
       }
 
+      clearIntrospectCache();
+      const sharedSession = await validateSessionToken({ forceRefresh: true });
+      if (!sharedSession?.userId) {
+        throw new Error("Unable to verify your shared sign-in session. Please try again.");
+      }
       await waitForServerSession();
       toastSuccess("Welcome to PSBUniverse. You have signed in successfully.", "Sign In Success");
       // Defer to the effect above: it navigates once the auth context is ready,
@@ -135,6 +143,7 @@ function useLogin(redirectParam) {
       setShakeForm(true);
       window.setTimeout(() => setShakeForm(false), 320);
     } finally {
+      await finishSessionEstablishment?.();
       setSubmitting(false);
     }
   }

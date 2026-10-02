@@ -13,41 +13,11 @@
 import { verifyToken } from '@/core/auth/jwt.utils';
 import { isSessionInvalidated } from '@/core/auth/session.service';
 import { getPSBSessionCookieFromRequest } from '@/core/auth/cookies.utils';
+import { getAuthCorsHeaders as corsHeaders } from '@/core/auth/cors.utils';
 import { getSupabaseAdmin } from '@/core/supabase/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-// ── CORS: echo the Origin only for psbuniverse.com subdomains (+ localhost dev)
-function resolveAllowedOrigin(request) {
-  const origin = request.headers.get('origin') || '';
-  if (!origin) return '';
-  try {
-    const { hostname, protocol } = new URL(origin);
-    const isPsb = hostname === 'psbuniverse.com' || hostname.endsWith('.psbuniverse.com');
-    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
-    if ((isPsb || isLocal) && (protocol === 'https:' || protocol === 'http:')) return origin;
-  } catch {
-    return '';
-  }
-  return '';
-}
-
-function corsHeaders(request) {
-  const allowOrigin = resolveAllowedOrigin(request);
-  const headers = {
-    'Content-Type': 'application/json',
-    'Cache-Control': 'no-store',
-    Vary: 'Origin',
-  };
-  if (allowOrigin) {
-    headers['Access-Control-Allow-Origin'] = allowOrigin;
-    headers['Access-Control-Allow-Credentials'] = 'true';
-    headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS';
-    headers['Access-Control-Allow-Headers'] = 'Content-Type, X-PSB-Module';
-  }
-  return headers;
-}
 
 function json(request, body, status) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders(request) });
