@@ -70,6 +70,21 @@ do not need their own expiry timers, logout handlers, or renewal dialogs.
 - Temporary network/server failures keep the last verified result rather than
    immediately logging the user out. They do not extend a known expired session.
 
+### Global Navbar Logout
+
+In dev/prod, the navbar logout sends a credentialed request to core's
+`/api/auth/logout`, even when clicked in a modular app. Core invalidates the
+current SSO session and expires `psb_session` and `psb_user_payload` for
+`.psbuniverse.com`, as well as legacy host-only copies and its access-token cookie.
+The clicked app clears local Supabase auth and redirects to the configured core
+portal root. Hosted core will not restore authentication from a leftover local
+Supabase session when the shared SSO session is missing.
+
+Other open apps clear their auth state on their next session check (normally
+within 30 seconds, or when a background tab resumes). A failed logout request
+shows an error instead of pretending global logout succeeded. Local mode does
+not call core and returns to its own login page.
+
 ### Ten-Minute Warning
 
 At 10 minutes remaining, the global **Session Expiring** modal shows a countdown:

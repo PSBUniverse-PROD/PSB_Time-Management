@@ -251,14 +251,13 @@ export async function hasSpecificModuleAccess(moduleId) {
  */
 export async function logout() {
   if (!SSO_ENABLED) return;
-  try {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    });
-  } catch (error) {
-    console.error("SSO logout error:", error);
-  }
+  const response = await fetch((IS_MODULE ? INTROSPECT_CORE_URL : "") + "/api/auth/logout", {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error("Unable to end your shared session. Please try again.");
 
   // Also clear the client-side payload cookie + cached introspection immediately
   clearPSBUserPayloadCookie();

@@ -13,6 +13,7 @@ import {
 } from "@/shared/utils/navbar-loader";
 import { SSO_ENABLED, IS_MODULE, logout as ssoLogout, redirectToLogin } from "@/core/sso-client";
 import { isLoginPath, validateRedirectUrl } from "@/core/auth/redirect-validator";
+import { toastError } from "@/shared/utils/toast";
 
 const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
 const ENV = process.env.NEXT_PUBLIC_ENV || "local";
@@ -348,8 +349,10 @@ export default function AppLayout({ children }) {
     try {
       // Attempt universal SSO logout first
       if (SSO_ENABLED) await ssoLogout();
-    } catch {
-      // Ignore SSO logout failure
+    } catch (error) {
+      setLogoutBusy(false);
+      toastError(error?.message || "Unable to log out. Please try again.", "Logout Failed");
+      return;
     }
 
     try {
@@ -362,7 +365,7 @@ export default function AppLayout({ children }) {
     clearAccessTokenCookie();
     setLogoutBusy(false);
     startLoader();
-    window.location.href = IS_PRODUCTION ? `${CORE_PORTAL_URL}/login` : "/login";
+    window.location.href = SSO_ENABLED ? new URL("/", CORE_PORTAL_URL).href : "/login";
   }
 
   if (authError) {

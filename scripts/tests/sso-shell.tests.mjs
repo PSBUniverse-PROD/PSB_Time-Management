@@ -8,6 +8,8 @@ import test from "node:test";
 import * as sso from "../../src/core/sso-client.js";
 import { isLoginPath, validateRedirectUrl } from "../../src/core/auth/redirect-validator.js";
 import { hasAppAccess } from "../../src/core/auth/access.js";
+import * as cookies from "../../src/core/auth/cookies.utils.js";
+import * as cors from "../../src/core/auth/cors.utils.js";
 
 const require = createRequire(import.meta.url);
 const { transform, loadBindings } = require("next/dist/build/swc");
@@ -168,8 +170,10 @@ test("a check started before sign-in cannot reject the newly established session
   provider.cleanup();
 });
 
-async function createLayout(auth, pathname = "/login", search = "", ssoEnabled = true) {
+async function createLayout(auth, pathname = "/login", search = "", ssoEnabled = true, logoutError = null) {
   const runtime = createHooks(), browser = createBrowser(pathname, search);
+  const errors = [];
+  const counts = { ssoLogout: 0, localLogout: 0 };
   const router = { replace: (target) => browser.redirects.push(target) };
   const exports = await loadComponent("src/shared/components/layout/AppLayout.js", {
     react: runtime.hooks, "react/jsx-runtime": jsxRuntime,
@@ -178,14 +182,15 @@ async function createLayout(auth, pathname = "/login", search = "", ssoEnabled =
     "@/shared/components/ui/controls/Button": defaultExport("Button"),
     "@/shared/components/layout/Header": defaultExport("Header"),
     "@/core/auth/useAuth": { useAuth: () => ({ dbUser: null, roles: [], ...auth }) },
-    "@/core/supabase/client": { getSupabase: () => ({ auth: { signOut: async () => {} } }) },
+    "@/core/supabase/client": { getSupabase: () => ({ auth: { signOut: async () => { counts.localLogout++; } } }) },
+    "@/shared/utils/toast": { toastError: (message) => errors.push(message) },
     "@/shared/utils/navbar-loader": { NAVBAR_LOADER_FINISH_EVENT: "finish", NAVBAR_LOADER_START_EVENT: "start" },
-    "@/core/sso-client": { SSO_ENABLED: ssoEnabled, IS_MODULE: true, logout: async () => {}, redirectToLogin: (target) => browser.redirects.push(target) },
+    "@/core/sso-client": { SSO_ENABLED: ssoEnabled, IS_MODULE: true, logout: async () => { counts.ssoLogout++; if (logoutError) throw logoutError; }, redirectToLogin: (target) => browser.redirects.push(target) },
     "@/core/auth/redirect-validator": { isLoginPath, validateRedirectUrl },
   }, { ...browser, process: { env: { NEXT_PUBLIC_ENV: "prod" } } });
   const tree = runtime.render(() => exports.default({ children: "credentials-form" }));
   runtime.effects.forEach((effect) => effect());
-  return { ...browser, tree };
+  return { ...browser, tree, errors, counts };
 }
 
 test("module login never shows credentials during verification and returns authenticated users locally", async () => {
@@ -415,4 +420,71 @@ test("local proxy does not accept an SSO cookie in place of local Supabase auth"
   const local = proxy.proxy(request({ "sb-access-token": "local-token" }));
   assert.equal(local.redirect, undefined);
   assert.equal(local.headers.get("X-SSO-Enabled"), "false");
+});
+
+test("navbar logout returns hosted users to the portal root and keeps local logout local", async () => {
+  for (const enabled of [true, false]) {
+    const layout = await createLayout({ loading: false, authUser: { id: 1 } }, "/time-tracker", "", enabled);
+    const header = layout.tree.props.children[0];
+    await header.props.onLogout();
+    assert.equal(layout.counts.ssoLogout, enabled ? 1 : 0);
+    assert.equal(layout.counts.localLogout, 1);
+    assert.deepEqual(layout.redirects, [enabled ? "https://www.psbuniverse.com/" : "/login"]);
+  }
+  const failed = await createLayout({ loading: false, authUser: { id: 1 } }, "/time-tracker", "", true, new Error("Core unavailable"));
+  await failed.tree.props.children[0].props.onLogout();
+  assert.equal(failed.redirects.length, 0);
+  assert.equal(failed.errors.length, 1);
+});
+
+test("module logout calls core with credentials and reports rejected logout", async () => {
+  let reject = false;
+  const browser = createBrowser();
+  const client = await loadComponent("src/core/sso-client.js", {}, {
+    ...browser, AbortSignal,
+    process: { env: { NEXT_PUBLIC_ENV: "prod", NEXT_PUBLIC_MODULE_KEY: "time-tracker" } },
+    fetch: async (url, options) => {
+      assert.equal(url, "https://www.psbuniverse.com/api/auth/logout");
+      assert.equal(options.method, "POST");
+      assert.equal(options.credentials, "include");
+      assert.ok(options.signal instanceof AbortSignal);
+      return { ok: !reject };
+    },
+  });
+  await client.logout();
+  reject = true;
+  await assert.rejects(client.logout(), /Unable to end your shared session/);
+});
+
+test("core logout clears domain and host cookies with credentialed CORS", async () => {
+  const invalidated = [];
+  const endpoint = await loadComponent("src/app/api/auth/logout/route.js", {
+    "@/core/auth/session.service": { invalidateSession: async (token) => invalidated.push(token) },
+    "@/core/auth/cookies.utils": cookies,
+    "@/core/auth/cors.utils": cors,
+  }, { Response });
+  const request = (origin) => new Request("https://www.psbuniverse.com/api/auth/logout", {
+    method: "POST", headers: { origin, cookie: "psb_session=synthetic-token" },
+  });
+  const response = await endpoint.POST(request("https://timesheets.psbuniverse.com"));
+  assert.equal(response.status, 200);
+  assert.deepEqual(invalidated, ["synthetic-token"]);
+  const expired = response.headers.getSetCookie();
+  assert.equal(expired.length, 5);
+  assert.equal(expired.filter((cookie) => cookie.includes("Domain=.psbuniverse.com")).length, 2);
+  assert.ok(expired.every((cookie) => cookie.includes("Max-Age=0")));
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "https://timesheets.psbuniverse.com");
+  assert.equal(response.headers.get("Access-Control-Allow-Credentials"), "true");
+  assert.equal((await endpoint.POST(request("https://untrusted.example"))).status, 403);
+  assert.equal(invalidated.length, 1);
+});
+
+test("hosted core cannot restore a logged-out SSO session from leftover local Supabase auth", async () => {
+  const provider = await createProvider(false, null);
+  assert.equal(provider.context().authUser, null);
+  assert.equal(provider.counts.local, 0);
+  provider.event("TOKEN_REFRESHED", { user: { id: "stale-user" }, access_token: "stale-token" });
+  await flush();
+  assert.equal(provider.context().authUser, null);
+  provider.cleanup();
 });

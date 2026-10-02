@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-03 Global Navbar Logout
+
+- Hosted navbar logout calls core's logout endpoint from every module and returns to the configured portal root. Local mode keeps local-only logout.
+- Core supports credentialed logout CORS, rejects untrusted origins, and expires domain-wide and host-only session cookies plus its access-token cookie.
+- Hosted core requires a valid shared session before restoring local Supabase auth; stale local tokens cannot undo SSO logout.
+- Logout failures show an error rather than silently redirecting. Other open apps detect the ended session on their next existing validation check.
+- Added mocked regression coverage for logout routing, cookie scopes, CORS, failures, and stale-session recovery.
+
+---
+
 ## 2026-10-03 SSO Environment Gate
 
 - SSO is enabled only for `NEXT_PUBLIC_ENV=dev` or `prod`. Local mode uses Supabase login and bootstrap roles without SSO requests, redirects, renewal, or expiry timers.

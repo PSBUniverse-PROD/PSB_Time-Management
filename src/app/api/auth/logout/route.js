@@ -9,8 +9,37 @@
 
 import { invalidateSession } from '@/core/auth/session.service';
 import { getClearPSBSessionCookieHeader, getClearPSBUserPayloadCookieHeader, getPSBSessionCookieFromRequest } from '@/core/auth/cookies.utils';
+import { getAuthCorsHeaders, resolveAllowedAuthOrigin } from '@/core/auth/cors.utils';
+
+export const dynamic = 'force-dynamic';
+
+function logoutHeaders(request) {
+  const hostname = new URL(request.url).hostname;
+  const domains = hostname === 'psbuniverse.com' || hostname.endsWith('.psbuniverse.com')
+    ? ['.psbuniverse.com', '']
+    : [''];
+  return [
+    ...Object.entries(getAuthCorsHeaders(request, 'POST, OPTIONS')),
+    ...domains.flatMap((domain) => [
+      ['Set-Cookie', getClearPSBSessionCookieHeader({ domain })],
+      ['Set-Cookie', getClearPSBUserPayloadCookieHeader({ domain })],
+    ]),
+    ['Set-Cookie', 'sb-access-token=; Path=/; Max-Age=0; SameSite=Lax'],
+  ];
+}
+
+export async function OPTIONS(request) {
+  return new Response(null, { status: 204, headers: getAuthCorsHeaders(request, 'POST, OPTIONS') });
+}
 
 export async function POST(request) {
+  const origin = request.headers.get('origin');
+  if (!origin || (origin !== new URL(request.url).origin && !resolveAllowedAuthOrigin(request))) {
+    return new Response(JSON.stringify({ error: 'Origin not allowed' }), {
+      status: 403,
+      headers: getAuthCorsHeaders(request, 'POST, OPTIONS'),
+    });
+  }
   try {
     // Get token from request
     const token = getPSBSessionCookieFromRequest(request);
@@ -27,11 +56,7 @@ export async function POST(request) {
     // in Node.js runtime — the Headers API may merge them with commas which is invalid for Set-Cookie.
     return new Response(responseBody, {
       status: 200,
-      headers: [
-        ['Content-Type', 'application/json'],
-        ['Set-Cookie', getClearPSBSessionCookieHeader()],
-        ['Set-Cookie', getClearPSBUserPayloadCookieHeader()],
-      ],
+      headers: logoutHeaders(request),
     });
   } catch (error) {
     console.error('Logout endpoint error:', error);
@@ -41,11 +66,7 @@ export async function POST(request) {
 
     return new Response(responseBody, {
       status: 200,
-      headers: [
-        ['Content-Type', 'application/json'],
-        ['Set-Cookie', getClearPSBSessionCookieHeader()],
-        ['Set-Cookie', getClearPSBUserPayloadCookieHeader()],
-      ],
+      headers: logoutHeaders(request),
     });
   }
 }

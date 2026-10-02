@@ -409,7 +409,7 @@ export default function AuthProvider({ children }) {
       setLoading(true);
 
       try {
-        if (SSO_ENABLED && IS_MODULE) {
+        if (SSO_ENABLED) {
           const ssoSession = await validateSessionToken({ forceRefresh: true });
           if (!active || sessionEnded) return;
           if (ssoSession === undefined) {
@@ -417,12 +417,17 @@ export default function AuthProvider({ children }) {
             setLoading(false);
           } else if (ssoSession?.userId &&
               (!Number.isFinite(ssoSession.expiresAt) || ssoSession.expiresAt > Date.now())) {
-            hydrateSSOState(ssoSession);
-            updateSessionExpiry(ssoSession.expiresAt);
+            if (IS_MODULE) {
+              hydrateSSOState(ssoSession);
+              updateSessionExpiry(ssoSession.expiresAt);
+              return;
+            }
           } else {
+            clearAccessTokenCookie();
             await resetAuthState();
           }
-          return;
+          if (ssoSession === undefined || !ssoSession?.userId ||
+              (Number.isFinite(ssoSession.expiresAt) && ssoSession.expiresAt <= Date.now())) return;
         }
 
         const { data: sessionData } = await supabase.auth.getSession();
@@ -491,6 +496,7 @@ export default function AuthProvider({ children }) {
         else resetAuthState();
         return;
       }
+      if (SSO_ENABLED && !lastAuthUserIdRef.current && !sessionEstablishmentPendingRef.current) return;
       if (SSO_ENABLED && IS_MODULE) return;
       if (session?.access_token) {
         setAccessTokenCookie(session);

@@ -164,8 +164,8 @@ export function getPSBSessionCookieHeader(token, options = {}) {
  * Get Set-Cookie header for clearing session (server-side response)
  * @returns {string} Set-Cookie header value for clearing
  */
-export function getClearPSBSessionCookieHeader() {
-  const domain = COOKIE_DOMAIN;
+export function getClearPSBSessionCookieHeader(options = {}) {
+  const domain = options.domain ?? COOKIE_DOMAIN;
 
   let cookieStr = `${COOKIE_NAME}=`;
   cookieStr += `; Path=${COOKIE_PATH}`;
@@ -221,8 +221,8 @@ export function getPSBUserPayloadCookieHeader(payload = {}) {
  * Get Set-Cookie header for clearing the user payload cookie
  * @returns {string} Set-Cookie header value for clearing
  */
-export function getClearPSBUserPayloadCookieHeader() {
-  const domain = COOKIE_DOMAIN;
+export function getClearPSBUserPayloadCookieHeader(options = {}) {
+  const domain = options.domain ?? COOKIE_DOMAIN;
 
   let cookieStr = `${USER_PAYLOAD_COOKIE_NAME}=`;
   cookieStr += `; Path=${COOKIE_PATH}`;
