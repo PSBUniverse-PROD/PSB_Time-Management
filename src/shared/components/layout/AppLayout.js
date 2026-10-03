@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Spinner } from "react-bootstrap";
 import Button from "@/shared/components/ui/controls/Button";
 import Header from "@/shared/components/layout/Header";
+import { ImpersonationBanner } from "@/modules/psbpages/profile/components/ImpersonatePanel";
 import { useAuth } from "@/core/auth/useAuth";
 import { getSupabase } from "@/core/supabase/client";
 import {
@@ -409,6 +410,7 @@ export default function AppLayout({ children }) {
         loaderProgress={progress}
         loaderVisible={progressVisible}
       />
+      <ImpersonationBanner />
       <main className="app-shell-body">{children}</main>
     </div>
   );

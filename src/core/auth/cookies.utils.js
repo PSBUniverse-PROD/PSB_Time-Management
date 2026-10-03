@@ -5,6 +5,7 @@
 
 // ── Cookie Configuration ────────────────────────────────────────────
 const COOKIE_NAME = 'psb_session';
+const IMPERSONATOR_COOKIE_NAME = 'psb_impersonator_session';
 const ENV = process.env.NEXT_PUBLIC_ENV || 'local';
 const COOKIE_DOMAIN = ENV === 'prod' ? (process.env.NEXT_PUBLIC_COOKIE_DOMAIN || '.psbuniverse.com') : '';
 const COOKIE_PATH = '/';
@@ -131,6 +132,22 @@ export function getPSBSessionCookieFromRequest(request) {
   }
 }
 
+export function getPSBImpersonatorSessionCookieFromRequest(request) {
+  const cookieHeader = request?.headers?.get('cookie');
+  if (!cookieHeader) return null;
+
+  const entry = cookieHeader.split(';').map((part) => part.trim()).find((part) =>
+    part.startsWith(`${IMPERSONATOR_COOKIE_NAME}=`),
+  );
+  if (!entry) return null;
+
+  try {
+    return decodeURIComponent(entry.slice(IMPERSONATOR_COOKIE_NAME.length + 1)) || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Get Set-Cookie header string for server-side response
  * @param {string} token - JWT token
@@ -160,6 +177,21 @@ export function getPSBSessionCookieHeader(token, options = {}) {
   return cookieStr;
 }
 
+export function getPSBImpersonatorSessionCookieHeader(token, options = {}) {
+  const maxAge = options.maxAge || COOKIE_MAX_AGE;
+  const domain = options.domain || COOKIE_DOMAIN;
+
+  let cookieStr = `${IMPERSONATOR_COOKIE_NAME}=${encodeURIComponent(token || '')}`;
+  cookieStr += `; Path=${COOKIE_PATH}`;
+  cookieStr += `; Max-Age=${maxAge}`;
+  cookieStr += `; SameSite=${COOKIE_SAMESITE}`;
+  if (domain) cookieStr += `; Domain=${domain}`;
+  if (COOKIE_SECURE) cookieStr += '; Secure';
+  cookieStr += '; HttpOnly';
+
+  return cookieStr;
+}
+
 /**
  * Get Set-Cookie header for clearing session (server-side response)
  * @returns {string} Set-Cookie header value for clearing
@@ -181,6 +213,21 @@ export function getClearPSBSessionCookieHeader(options = {}) {
     cookieStr += '; Secure';
   }
 
+  cookieStr += '; HttpOnly';
+
+  return cookieStr;
+}
+
+export function getClearPSBImpersonatorSessionCookieHeader(options = {}) {
+  const domain = options.domain ?? COOKIE_DOMAIN;
+
+  let cookieStr = `${IMPERSONATOR_COOKIE_NAME}=`;
+  cookieStr += `; Path=${COOKIE_PATH}`;
+  cookieStr += '; Max-Age=0';
+  cookieStr += '; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  cookieStr += `; SameSite=${COOKIE_SAMESITE}`;
+  if (domain) cookieStr += `; Domain=${domain}`;
+  if (COOKIE_SECURE) cookieStr += '; Secure';
   cookieStr += '; HttpOnly';
 
   return cookieStr;

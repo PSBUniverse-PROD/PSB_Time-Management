@@ -26,6 +26,9 @@ import {
   getPSBSessionCookieFromRequest,
   getPSBSessionCookieHeader,
   getPSBUserPayloadCookieHeader,
+  getPSBImpersonatorSessionCookieFromRequest,
+  getPSBImpersonatorSessionCookieHeader,
+  getClearPSBImpersonatorSessionCookieHeader,
 } from '@/core/auth/cookies.utils';
 
 export const runtime = 'nodejs';
@@ -51,6 +54,13 @@ function json(body, status) {
  */
 const REQUIRED_ROLE_NAME = process.env.IMPERSONATION_REQUIRED_ROLE || 'CORE MANAGER';
 
+function isActiveRow(record) {
+  const value = record?.is_active;
+  if (value === false || value === 0) return false;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return !['false', '0', 'f', 'n', 'no'].includes(normalized);
+}
+
 /**
  * Resolve and fully verify the CALLER's own session.
  * This deliberately reads the caller's own psb_session cookie — never a
@@ -75,9 +85,23 @@ async function resolveCallerSession(request) {
   return payload;
 }
 
+async function resolveImpersonatorSession(request) {
+  const token = getPSBImpersonatorSessionCookieFromRequest(request);
+  if (!token) return null;
+
+  try {
+    const payload = await verifyToken(token);
+    if (await isSessionInvalidated(token)) return null;
+    return { token, payload };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Check whether a verified session belongs to a user with an active
- * CORE MANAGER role.
+ * CORE MANAGER role. Active flags are normalized like the profile bootstrap,
+ * which supports boolean, numeric, and common text representations.
  *
  * The user's own roles are re-read from the database on every call rather than
  * trusted from the JWT, so revoking the role takes effect immediately instead of
@@ -85,42 +109,95 @@ async function resolveCallerSession(request) {
  * @param {Object} payload - Verified session payload
  * @returns {Promise<boolean>} True when the caller may impersonate
  */
-async function callerCanImpersonate(payload) {
-  if (!payload?.userId) return false;
+async function getCallerImpersonationAccess(payload) {
+  if (!payload?.userId) return { allowed: false, reason: 'session_user_missing' };
 
   const supabaseAdmin = getSupabaseAdmin();
 
   // The caller's active app-role assignments.
-  const { data: accessRows } = await supabaseAdmin
+  const { data: accessRows, error: accessError } = await supabaseAdmin
     .from('psb_m_userapproleaccess')
-    .select('role_id')
-    .eq('user_id', payload.userId)
-    .eq('is_active', true);
+    .select('role_id, is_active')
+    .eq('user_id', payload.userId);
+  if (accessError) throw accessError;
 
-  const roleIds = [...new Set((accessRows || []).map((r) => r.role_id).filter(Boolean))];
-  if (roleIds.length === 0) return false;
+  const roleIds = [...new Set((accessRows || [])
+    .filter(isActiveRow)
+    .map((r) => r.role_id)
+    .filter(Boolean))];
+  if (roleIds.length === 0) return { allowed: false, reason: 'no_active_assignments' };
 
   // Does any of those roles resolve to an active "CORE MANAGER" role?
-  const { data: roleRows } = await supabaseAdmin
+  const { data: roleRows, error: roleError } = await supabaseAdmin
     .from('psb_s_role')
-    .select('role_id')
-    .in('role_id', roleIds)
-    .eq('is_active', true)
-    .ilike('role_name', REQUIRED_ROLE_NAME);
+    .select('role_id, role_name, is_active')
+    .in('role_id', roleIds);
+  if (roleError) throw roleError;
 
-  return Array.isArray(roleRows) && roleRows.length > 0;
+  const requiredRoleName = REQUIRED_ROLE_NAME.trim().toLocaleLowerCase();
+  const requiredRoles = (Array.isArray(roleRows) ? roleRows : []).filter((role) =>
+    String(role?.role_name || '').trim().toLocaleLowerCase() === requiredRoleName,
+  );
+  if (requiredRoles.length === 0) return { allowed: false, reason: 'required_role_not_assigned' };
+  if (!requiredRoles.some(isActiveRow)) return { allowed: false, reason: 'required_role_inactive' };
+  return { allowed: true, reason: null };
+}
+
+async function callerCanImpersonate(payload) {
+  const access = await getCallerImpersonationAccess(payload);
+  return access.allowed;
 }
 
 // ── GET: may the current session impersonate? ────────────────────────────────
 export async function GET(request) {
-  const payload = await resolveCallerSession(request);
-  const canImpersonate = await callerCanImpersonate(payload);
-  return json({ canImpersonate }, 200);
+  try {
+    const payload = await resolveCallerSession(request);
+    const [access, impersonatorSession] = await Promise.all([
+      getCallerImpersonationAccess(payload),
+      resolveImpersonatorSession(request),
+    ]);
+    return json({
+      canImpersonate: access.allowed,
+      denialReason: access.reason,
+      isImpersonating: Boolean(impersonatorSession),
+    }, 200);
+  } catch (error) {
+    console.error('Impersonation permission check failed:', error);
+    return json({ error: 'Unable to verify impersonation permission' }, 503);
+  }
 }
 
 // ── POST: mint a session for the target user ────────────────────────────────
 export async function POST(request) {
   try {
+    const body = await request.json().catch(() => ({}));
+
+    if (body?.action === 'restore') {
+      const originalSession = await resolveImpersonatorSession(request);
+      if (!originalSession) return json({ error: 'Original session is no longer available' }, 401);
+
+      const { token, payload } = originalSession;
+      const maxAge = Number.isFinite(payload.expiresAt)
+        ? Math.max(1, Math.floor((payload.expiresAt - Date.now()) / 1000))
+        : undefined;
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: [
+          ['Content-Type', 'application/json'],
+          ['Set-Cookie', getPSBSessionCookieHeader(token, { maxAge })],
+          ['Set-Cookie', getPSBUserPayloadCookieHeader({
+            userId: payload.userId,
+            email: payload.email,
+            fullName: payload.fullName,
+            modules: payload.modules,
+            roles: payload.roles,
+          })],
+          ['Set-Cookie', getClearPSBImpersonatorSessionCookieHeader()],
+          ['Set-Cookie', 'sb-access-token=; Path=/; Max-Age=0; SameSite=Lax'],
+        ],
+      });
+    }
+
     const caller = await resolveCallerSession(request);
     if (!caller) {
       return json({ error: 'Unauthorized' }, 401);
@@ -129,7 +206,10 @@ export async function POST(request) {
       return json({ error: 'Forbidden' }, 403);
     }
 
-    const body = await request.json().catch(() => ({}));
+    if (await resolveImpersonatorSession(request)) {
+      return json({ error: 'Return to your original account before impersonating another user' }, 409);
+    }
+
     const identifier = String(body?.identifier || '').trim();
     if (!identifier) {
       return json({ error: 'A username or email is required' }, 400);
@@ -159,16 +239,19 @@ export async function POST(request) {
     if (!targetUser) {
       return json({ error: 'Target user not found' }, 404);
     }
+    if (String(targetUser.user_id) === String(caller.userId)) {
+      return json({ error: 'You are already signed in as this user' }, 400);
+    }
 
     // Load the target's active roles so the new session carries the same
     // app/role access the target would normally get from a real sign-in.
-    const { data: roleRows } = await supabaseAdmin
+    const { data: roleRows, error: targetRolesError } = await supabaseAdmin
       .from('psb_m_userapproleaccess')
       .select('*')
-      .eq('user_id', targetUser.user_id)
-      .eq('is_active', true);
+      .eq('user_id', targetUser.user_id);
+    if (targetRolesError) throw targetRolesError;
 
-    const roles = Array.isArray(roleRows) ? roleRows : [];
+    const roles = Array.isArray(roleRows) ? roleRows.filter(isActiveRow) : [];
     const moduleIds = [...new Set(roles.map((r) => r.app_id).filter(Boolean))];
     const roleIds = [...new Set(roles.map((r) => r.role_id).filter(Boolean))];
 
@@ -178,6 +261,10 @@ export async function POST(request) {
     };
 
     const session = await createUserSession(targetAuthUser, targetUser, roles);
+    const callerToken = getPSBSessionCookieFromRequest(request);
+    const restoreMaxAge = Number.isFinite(caller.expiresAt)
+      ? Math.max(1, Math.floor((caller.expiresAt - Date.now()) / 1000))
+      : undefined;
 
     // Audit trail (server logs only).
     console.log(
@@ -200,6 +287,7 @@ export async function POST(request) {
       headers: [
         ['Content-Type', 'application/json'],
         ['Set-Cookie', getPSBSessionCookieHeader(session.token)],
+        ['Set-Cookie', getPSBImpersonatorSessionCookieHeader(callerToken, { maxAge: restoreMaxAge })],
         ['Set-Cookie', getPSBUserPayloadCookieHeader({
           userId: targetUser.user_id,
           email: targetUser.email,

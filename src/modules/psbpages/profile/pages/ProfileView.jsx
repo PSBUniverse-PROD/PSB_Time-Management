@@ -390,7 +390,7 @@ export default function ProfileView() {
         </div>
       ) : null}
 
-      <ImpersonatePanel />
+      <ImpersonatePanel roleGroups={h.roleGroupsByApp} />
 
       <Row className="g-3 align-items-start">
         <Col lg={4} className="profile-social-col" style={{ flex: "0 0 30%", maxWidth: "30%" }}>

@@ -8,7 +8,12 @@
  */
 
 import { invalidateSession } from '@/core/auth/session.service';
-import { getClearPSBSessionCookieHeader, getClearPSBUserPayloadCookieHeader, getPSBSessionCookieFromRequest } from '@/core/auth/cookies.utils';
+import {
+  getClearPSBSessionCookieHeader,
+  getClearPSBUserPayloadCookieHeader,
+  getClearPSBImpersonatorSessionCookieHeader,
+  getPSBSessionCookieFromRequest,
+} from '@/core/auth/cookies.utils';
 import { getAuthCorsHeaders, resolveAllowedAuthOrigin } from '@/core/auth/cors.utils';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +28,7 @@ function logoutHeaders(request) {
     ...domains.flatMap((domain) => [
       ['Set-Cookie', getClearPSBSessionCookieHeader({ domain })],
       ['Set-Cookie', getClearPSBUserPayloadCookieHeader({ domain })],
+      ['Set-Cookie', getClearPSBImpersonatorSessionCookieHeader({ domain })],
     ]),
     ['Set-Cookie', 'sb-access-token=; Path=/; Max-Age=0; SameSite=Lax'],
   ];
