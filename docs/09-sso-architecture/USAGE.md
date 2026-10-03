@@ -76,8 +76,9 @@ In dev/prod, the navbar logout sends a credentialed request to core's
 `/api/auth/logout`, even when clicked in a modular app. Core invalidates the
 current SSO session and expires `psb_session` and `psb_user_payload` for
 `.psbuniverse.com`, as well as legacy host-only copies and its access-token cookie.
-The clicked app clears local Supabase auth and redirects to the configured core
-portal root. Hosted core will not restore authentication from a leftover local
+The clicked app clears local Supabase auth and redirects to `https://psbuniverse.com/`
+without a module return parameter. Explicit logout suppresses automatic session-loss
+redirects so they cannot send the visitor back to the module. Hosted core will not restore authentication from a leftover local
 Supabase session when the shared SSO session is missing.
 
 Other open apps clear their auth state on their next session check (normally

@@ -92,6 +92,7 @@ export default function AuthProvider({ children }) {
   const sessionEstablishmentPendingRef = useRef(false);
   const checkSessionRef = useRef(null);
   const sessionRevisionRef = useRef(0);
+  const logoutPendingRef = useRef(false);
   const hasInitializedRef = useRef(false);
   const lastAuthUserIdRef = useRef(null);
   const lastBootstrapTsRef = useRef(0);
@@ -193,7 +194,7 @@ export default function AuthProvider({ children }) {
     }
 
     function endSession() {
-      if (!active || sessionEnded || !lastAuthUserIdRef.current) return;
+      if (!active || sessionEnded || logoutPendingRef.current || !lastAuthUserIdRef.current) return;
       sessionEnded = true;
       clearAccessTokenCookie();
       clearPSBUserPayloadCookie();
@@ -201,7 +202,7 @@ export default function AuthProvider({ children }) {
       resetAuthState();
       window.setTimeout(async () => {
         await supabase.auth.signOut({ scope: "local" }).catch(() => {});
-        redirectToLogin(window.location.pathname + window.location.search);
+        if (!logoutPendingRef.current) redirectToLogin(window.location.pathname + window.location.search);
       }, 0);
     }
 
@@ -249,14 +250,14 @@ export default function AuthProvider({ children }) {
     }
 
     async function checkSession() {
-      if (!SSO_ENABLED || !active || sessionEnded || renewingSession || sessionEstablishmentPendingRef.current || !hasInitializedRef.current ||
+      if (!SSO_ENABLED || !active || sessionEnded || logoutPendingRef.current || renewingSession || sessionEstablishmentPendingRef.current || !hasInitializedRef.current ||
           !lastAuthUserIdRef.current) return;
       if (checkingSession) return;
       checkingSession = true;
       const revision = sessionRevisionRef.current;
       try {
         const session = await validateSessionToken({ forceRefresh: true });
-        if (!active || sessionEnded || sessionEstablishmentPendingRef.current || revision !== sessionRevisionRef.current) return;
+        if (!active || sessionEnded || logoutPendingRef.current || sessionEstablishmentPendingRef.current || revision !== sessionRevisionRef.current) return;
         if (session === undefined) {
           if (verifiedSessionExpiresAt !== null && verifiedSessionExpiresAt <= Date.now()) endSession();
           return;
@@ -269,7 +270,7 @@ export default function AuthProvider({ children }) {
         updateSessionExpiry(session.expiresAt);
       } finally {
         checkingSession = false;
-        if (active && !sessionEnded && !sessionEstablishmentPendingRef.current && revision !== sessionRevisionRef.current) {
+        if (active && !sessionEnded && !logoutPendingRef.current && !sessionEstablishmentPendingRef.current && revision !== sessionRevisionRef.current) {
           window.setTimeout(checkSession, 0);
         }
       }
@@ -489,7 +490,7 @@ export default function AuthProvider({ children }) {
 
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       console.debug('[Auth] onAuthStateChange', event, { init: hasInitializedRef.current, userId: lastAuthUserIdRef.current });  // remove when bug confirmed fixed
-      if (!active || sessionEnded) return;
+      if (!active || sessionEnded || logoutPendingRef.current) return;
       if (event === "SIGNED_OUT" && lastAuthUserIdRef.current) {
         clearAccessTokenCookie();
         if (SSO_ENABLED) window.setTimeout(checkSession, 0);
@@ -646,6 +647,13 @@ export default function AuthProvider({ children }) {
       finishSessionEstablishment: async () => {
         sessionEstablishmentPendingRef.current = false;
         await checkSessionRef.current?.();
+      },
+      beginLogout: () => {
+        logoutPendingRef.current = true;
+        sessionRevisionRef.current += 1;
+      },
+      cancelLogout: () => {
+        logoutPendingRef.current = false;
       },
     }),
     [authUser, dbUser, roles, loading, authError],

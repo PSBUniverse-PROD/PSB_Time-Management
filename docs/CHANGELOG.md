@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-03 Explicit Logout Redirect Priority
+
+- Navbar logout now navigates to the clean `https://psbuniverse.com/` URL, without a module return parameter.
+- Explicit logout pauses automatic auth-loss redirects and invalidates pending session checks so they cannot override that destination. A failed logout restores normal handling for retry.
+- Added a regression for logout overlapping with session loss. Local mode retains its local login destination.
+
+---
+
 ## 2026-10-03 Global Navbar Logout
 
 - Hosted navbar logout calls core's logout endpoint from every module and returns to the configured portal root. Local mode keeps local-only logout.

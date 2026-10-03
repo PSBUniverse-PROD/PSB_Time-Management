@@ -87,7 +87,7 @@ function shouldStartRouteLoader(event) {
 export default function AppLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { loading, authUser, dbUser, roles, authError } = useAuth();
+  const { loading, authUser, dbUser, roles, authError, beginLogout, cancelLogout } = useAuth();
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressVisible, setProgressVisible] = useState(false);
@@ -230,7 +230,7 @@ export default function AppLayout({ children }) {
   }, [completeProgress]);
 
   useEffect(() => {
-    if (!loading && !authError && !isAuthenticated && ((SSO_ENABLED && IS_MODULE) || !isLoginPage)) {
+    if (!logoutBusy && !loading && !authError && !isAuthenticated && ((SSO_ENABLED && IS_MODULE) || !isLoginPage)) {
       startLoader();
       if (SSO_ENABLED && IS_MODULE) {
         const returnPath = isLoginPage
@@ -241,7 +241,7 @@ export default function AppLayout({ children }) {
         router.replace("/login");
       }
     }
-  }, [authError, isAuthenticated, isLoginPage, loading, router, startLoader]);
+  }, [authError, isAuthenticated, isLoginPage, loading, logoutBusy, router, startLoader]);
 
   // Redirect away from the login page ONLY users who were already signed in
   // when auth first settled (they opened /login with a live session). A FRESH
@@ -345,11 +345,14 @@ export default function AppLayout({ children }) {
   }, [clearProgressTimers]);
 
   async function handleLogout() {
+    if (logoutBusy) return;
+    beginLogout?.();
     setLogoutBusy(true);
     try {
       // Attempt universal SSO logout first
       if (SSO_ENABLED) await ssoLogout();
     } catch (error) {
+      cancelLogout?.();
       setLogoutBusy(false);
       toastError(error?.message || "Unable to log out. Please try again.", "Logout Failed");
       return;
@@ -363,9 +366,8 @@ export default function AppLayout({ children }) {
     }
 
     clearAccessTokenCookie();
-    setLogoutBusy(false);
     startLoader();
-    window.location.href = SSO_ENABLED ? new URL("/", CORE_PORTAL_URL).href : "/login";
+    window.location.href = SSO_ENABLED ? "https://psbuniverse.com/" : "/login";
   }
 
   if (authError) {
