@@ -61,6 +61,7 @@ import {
   loadTimeTrackerData,
   loadWeekSubmissionStatus,
   recallTimesheet as recallTimesheetAction,
+  recalculateWeekHours as recalculateWeekHoursAction,
   returnTimesheetStage,
   saveEditReason,
   saveScheduleModel,
@@ -522,6 +523,15 @@ function useLogsPage(initialData, permissions) {
     setRefreshing(true);
     setWeekLoading(true);
     try {
+      // Refresh also re-applies the current hour rules to this week's logs,
+      // so the table and Summary never show hours from an older rule set.
+      const recalc = await recalculateWeekHoursAction({ weekStartDate: weekStart });
+      if (!recalc?.success) {
+        toastError(recalc?.error || "Unable to recalculate this week's hours.", "Time Logs");
+      } else if (recalc.updated > 0) {
+        toastSuccess(`Recalculated hours for ${recalc.updated} log(s).`, "Time Logs");
+      }
+
       const [data, status] = await Promise.all([
         loadTimeTrackerData(weekStart, weekEnd),
         loadWeekSubmissionStatus(weekStart),
@@ -1149,7 +1159,7 @@ function TimeLogTable({
         </div>
         <div className="tt-table-header-actions">
           {headerExtra}
-          <RefreshButton onClick={onRefresh} loading={refreshing} label="Refresh logs and summary" />
+          <RefreshButton onClick={onRefresh} loading={refreshing} label="Recalculate hours and refresh logs and summary" />
           <button
             type="button"
             className="tt-pill-week"
@@ -1324,7 +1334,7 @@ function TimesheetSummary({
             icon={faBolt}
             iconClass="tt-summary-icon-overtime"
             label="Overtime"
-            sub="30-min blocks before clock-in or after clock-out"
+            sub="Early clock-in, plus 30-min blocks after clock-out"
             value={`${overtimeHours.toFixed(2)} hrs`}
             valueClass="tt-summary-value-overtime"
           />
@@ -2064,7 +2074,8 @@ function ScheduleModelModal({ model, onClose, onSave }) {
         each hour late costs 0.5 hr for 11–45 min and 1 hr for 46–59 min. The break is deducted
         only after the first half of the day&apos;s hours, so half
         days keep their full time (leave both break times empty for no break). Work after Clock
-        Out counts as overtime in 30-minute blocks.
+        Out counts as overtime in 30-minute blocks. Clocking in early also counts as overtime: nothing
+        for the first 10 min, then 0.5 hr for 11–45 min and 1 hr for 46–59 min of each hour early.
         For night shifts, a time earlier than the one before it counts as the next day (e.g. Clock
         In 22:00, Clock Out 07:00). Daily hours are rounded to the half hour (0–15 min down,
         16–35 min to :30, 36+ min up).
@@ -3444,11 +3455,23 @@ function useManagedEmployeeWeek(employeeId) {
     if (refreshing) return;
     setRefreshing(true);
     try {
+      // Same as the Logs tab: re-apply the current hour rules before reloading.
+      if (employeeId) {
+        const recalc = await recalculateWeekHoursAction({
+          weekStartDate: toDateStr(weekRange.start),
+          targetUserId: employeeId,
+        });
+        if (!recalc?.success) {
+          toastError(recalc?.error || "Unable to recalculate this week's hours.", "Manage Time");
+        } else if (recalc.updated > 0) {
+          toastSuccess(`Recalculated hours for ${recalc.updated} log(s).`, "Manage Time");
+        }
+      }
       await Promise.all([loadWeek(), refreshMissedWeeks()]);
     } finally {
       setRefreshing(false);
     }
-  }, [refreshing, loadWeek, refreshMissedWeeks]);
+  }, [refreshing, employeeId, weekRange, loadWeek, refreshMissedWeeks]);
 
   const isSubmissionLocked = useMemo(() => {
     const name = String(submissionStatus.statusName || "").toLowerCase();

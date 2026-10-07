@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 SSO Limited To Prod
+
+- SSO is now enabled only for `NEXT_PUBLIC_ENV=prod`. `dev` behaves like `local`: per-app Supabase login and bootstrap roles, with no introspection, renewal, shared logout, or cross-app redirects.
+- Reason: dev deployments run on `*.vercel.app`, where the shared session cookie and core's auth CORS rules cannot apply.
+
+---
+
 ## 2026-10-03 Explicit Logout Redirect Priority
 
 - Navbar logout now navigates to the clean `https://psbuniverse.com/` URL, without a module return parameter.

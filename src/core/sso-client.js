@@ -20,7 +20,10 @@
  */
 
 const MODULE_KEY = (process.env.NEXT_PUBLIC_MODULE_KEY || "").trim();
-export const SSO_ENABLED = ["dev", "prod"].includes(process.env.NEXT_PUBLIC_ENV || "local");
+// Prod only. Shared login needs every app under one parent domain
+// (.psbuniverse.com); dev runs on *.vercel.app hosts, which browsers never
+// let share cookies, so dev signs in per app like local does.
+export const SSO_ENABLED = (process.env.NEXT_PUBLIC_ENV || "local") === "prod";
 const INTROSPECT_CORE_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
 // Core resolves introspection same-origin; a module (any non-core module_key)
 // calls the core portal cross-origin with credentials.

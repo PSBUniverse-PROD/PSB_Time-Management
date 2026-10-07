@@ -1375,7 +1375,9 @@
   border-left: 1px solid #c8d9e7;
   box-shadow: -10px 0 28px rgba(18, 53, 81, 0.18);
   transform: translateX(100%);
-  transition: transform 180ms ease;
+  /* Hidden outright when closed: moving it off-screen is not enough inside a modal. */
+  visibility: hidden;
+  transition: transform 180ms ease, visibility 0s linear 180ms;
   z-index: 1150;
   padding: 0.95rem;
   overflow-y: auto;
@@ -1383,6 +1385,8 @@
 
 .psb-ui-table-sidepanel.is-open {
   transform: translateX(0);
+  visibility: visible;
+  transition: transform 180ms ease, visibility 0s;
 }
 
 .psb-ui-table-sidepanel-header {

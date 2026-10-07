@@ -1407,6 +1407,89 @@ export async function saveTimeLogEntry({ logId, clockInDate, clockOutDate, clock
   return { success: true, record: data };
 }
 
+/**
+ * Re-apply the current hour rules to one week's clocked-out logs.
+ *
+ * Business Rule:
+ * Hours are stored on each log when it is clocked out or saved, so a log
+ * keeps the rules that were live at that moment. This recomputes total and
+ * overtime hours for every clocked-out log in the week from its stored times
+ * and the employee's CURRENT work schedule, and writes back only the logs
+ * whose numbers changed. Times, edit reasons and audit columns are not
+ * touched. A week whose timesheet is Pending or Approved is left alone.
+ *
+ * @param {Object} params
+ * @param {string} params.weekStartDate - any "YYYY-MM-DD" inside the week; the Monday–Sunday week is worked out here.
+ * @param {number} [params.targetUserId] - admin only, the employee whose week this is ("Manage Time For…").
+ * @returns {Promise<{success:boolean, updated?:number, locked?:boolean, error?:string}>}
+ */
+export async function recalculateWeekHours({ weekStartDate, targetUserId }) {
+  const subject = await resolveTimeSubject(targetUserId);
+  if (subject.error) return { success: false, error: subject.error };
+  const { userId, supabase } = subject;
+  if (!weekStartDate) return { success: false, error: "Week start date is required." };
+
+  // The week is derived here, never taken from the browser, so one call can
+  // only ever touch the single week that the lock check below covers.
+  const weekStart = getMondayOfWeekStr(weekStartDate);
+  const weekEnd = addDaysStr(weekStart, 6);
+
+  const { locked } = await isWeekLocked(supabase, userId, weekStart);
+  if (locked) return { success: true, updated: 0, locked: true };
+
+  let rulesByDay;
+  try {
+    rulesByDay = await loadScheduleRulesForUser(supabase, userId);
+  } catch (err) {
+    console.error("Week-hour recalculation schedule error:", err.message);
+    return { success: false, error: "Unable to load the work schedule. Hours were not recalculated." };
+  }
+
+  const { data: logs, error: logsError } = await supabase
+    .from("time_t_logs")
+    .select("log_id, clock_in_date, clock_in_time, clock_out_date, clock_out_time, total_hours, overtime_hours")
+    .eq("user_id", userId)
+    .gte("clock_in_date", weekStart)
+    .lte("clock_in_date", weekEnd);
+
+  if (logsError) {
+    console.error("Week-hour recalculation logs error:", describeError(logsError));
+    return { success: false, error: "Unable to load this week's logs. Hours were not recalculated." };
+  }
+
+  let updated = 0;
+  for (const log of logs || []) {
+    // Open sessions have no hours yet.
+    if (!log.clock_out_date || !log.clock_out_time) continue;
+
+    const hours = computeLogHours(
+      {
+        clockInDate: log.clock_in_date,
+        clockInTime: log.clock_in_time,
+        clockOutDate: log.clock_out_date,
+        clockOutTime: log.clock_out_time,
+      },
+      rulesByDay,
+    );
+    if (hours.grossHours < 0) continue;
+    if (Number(log.total_hours) === hours.totalHours && Number(log.overtime_hours) === hours.overtimeHours) continue;
+
+    const { error } = await supabase
+      .from("time_t_logs")
+      .update({ total_hours: hours.totalHours, overtime_hours: hours.overtimeHours })
+      .eq("log_id", log.log_id)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("Week-hour recalculation update error:", describeError(error));
+      return { success: false, updated, error: "Some hours could not be recalculated. Please try again." };
+    }
+    updated += 1;
+  }
+
+  return { success: true, updated, locked: false };
+}
+
 const WORKFLOW_STATUS_PENDING = "Pending";
 
 /**

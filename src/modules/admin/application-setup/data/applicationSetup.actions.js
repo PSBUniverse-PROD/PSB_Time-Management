@@ -41,6 +41,22 @@ function validateModuleKey(value) {
   }
 }
 
+// App URLs are stored as the site address only (scheme + host); the card supplies the path.
+function sanitizeBaseUrl(value, label) {
+  const text = sanitizeOptionalText(value);
+  if (!text) return null;
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error(`${label} must be a full address starting with http:// or https://.`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${label} must start with http:// or https://.`);
+  }
+  return url.origin;
+}
+
 function resolveOrderField(applications) {
   const sample = Array.isArray(applications) && applications.length > 0 ? applications[0] : null;
   if (!sample || typeof sample !== "object") return ORDER_FIELD_CANDIDATES[0];
@@ -92,6 +108,8 @@ export async function createApplicationAction(payload) {
   const appName = normalizeText(payload?.app_name);
   const appDesc = sanitizeOptionalText(payload?.app_desc);
   const moduleKey = sanitizeOptionalText(payload?.module_key);
+  const devUrl = sanitizeBaseUrl(payload?.dev_url, "Dev URL");
+  const prodUrl = sanitizeBaseUrl(payload?.prod_url, "Prod URL");
   const isActive = hasOwn(payload || {}, "is_active") ? normalizeBoolean(payload?.is_active) : true;
 
   if (!appName) throw new Error("Application name is required.");
@@ -110,6 +128,8 @@ export async function createApplicationAction(payload) {
 
   const insertPayload = { app_name: appName, app_desc: appDesc, is_active: isActive, [orderField]: nextOrder };
   if (moduleKey) insertPayload.module_key = moduleKey;
+  if (devUrl) insertPayload.dev_url = devUrl;
+  if (prodUrl) insertPayload.prod_url = prodUrl;
 
   const { data, error } = await supabase.from("psb_s_application")
     .insert(insertPayload)
@@ -137,6 +157,8 @@ export async function updateApplicationAction(appId, updates) {
     }
     payload.module_key = mk;
   }
+  if (hasOwn(updates, "dev_url")) payload.dev_url = sanitizeBaseUrl(updates.dev_url, "Dev URL");
+  if (hasOwn(updates, "prod_url")) payload.prod_url = sanitizeBaseUrl(updates.prod_url, "Prod URL");
   if (hasOwn(updates, "is_active")) payload.is_active = normalizeBoolean(updates.is_active);
   if (Object.keys(payload).length === 0) throw new Error("No valid application updates supplied.");
 
@@ -259,4 +281,82 @@ export async function saveApplicationOrderAction(appIds) {
   }
 
   return { orderField, updatedCount: requestedIds.length };
+}
+
+// ─── ROLE USER ACTIONS ─────────────────────────────────────
+
+function computeUserFullName(row) {
+  const composed = [row?.first_name, row?.middle_name, row?.last_name].map((v) => normalizeText(v)).filter(Boolean).join(" ");
+  return composed || normalizeText(row?.username || row?.user_name) || "--";
+}
+
+function normalizeIdList(values) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : []).filter((value) => {
+    const key = normalizeText(value);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function loadRoleForUsers(supabase, roleId) {
+  if (roleId == null || roleId === "") throw new Error("Role id is required.");
+  const { data, error } = await supabase.from("psb_s_role").select("*").eq("role_id", roleId).maybeSingle();
+  if (error) throw new Error(error.message || "Failed to fetch role");
+  if (!data) throw new Error("Role not found.");
+  return data;
+}
+
+export async function loadRoleUsersAction(roleId) {
+  const supabase = getSupabaseAdmin();
+  const role = await loadRoleForUsers(supabase, roleId);
+
+  const [accessResult, usersResult] = await Promise.all([
+    supabase.from("psb_m_userapproleaccess").select("*").eq("role_id", role.role_id).eq("app_id", role.app_id).eq("is_active", true),
+    supabase.from("psb_s_user").select("*").order("user_id", { ascending: true }),
+  ]);
+
+  if (accessResult.error) throw new Error(accessResult.error.message || "Failed to fetch role users");
+  if (usersResult.error) throw new Error(usersResult.error.message || "Failed to fetch users");
+
+  const users = (Array.isArray(usersResult.data) ? usersResult.data : []).map((row) => ({
+    user_id: row?.user_id ?? null,
+    full_name: computeUserFullName(row),
+    username: normalizeText(row?.username || row?.user_name) || "--",
+    email: normalizeText(row?.email || row?.user_email) || "--",
+    employee_id: normalizeText(row?.employee_id) || "--",
+    is_active: row?.is_active == null ? true : normalizeBoolean(row.is_active),
+  }));
+
+  return {
+    role: { role_id: role.role_id, app_id: role.app_id, role_name: role.role_name },
+    memberUserIds: normalizeIdList((accessResult.data || []).map((row) => row?.user_id)),
+    users,
+  };
+}
+
+export async function saveRoleUsersAction(roleId, changes) {
+  const supabase = getSupabaseAdmin();
+  // app_id is resolved from the role, never taken from the client
+  const role = await loadRoleForUsers(supabase, roleId);
+
+  const removeUserIds = normalizeIdList(changes?.removeUserIds);
+  const removeKeys = new Set(removeUserIds.map((id) => String(id)));
+  const addUserIds = normalizeIdList(changes?.addUserIds).filter((id) => !removeKeys.has(String(id)));
+
+  if (addUserIds.length > 0) {
+    const rows = addUserIds.map((userId) => ({ user_id: userId, app_id: role.app_id, role_id: role.role_id, is_active: true }));
+    const { error } = await supabase.from("psb_m_userapproleaccess")
+      .upsert(rows, { onConflict: "user_id,app_id,role_id" });
+    if (error) throw new Error(error.message || "Failed to add users to role");
+  }
+
+  if (removeUserIds.length > 0) {
+    const { error } = await supabase.from("psb_m_userapproleaccess")
+      .delete().eq("role_id", role.role_id).eq("app_id", role.app_id).in("user_id", removeUserIds);
+    if (error) throw new Error(error.message || "Failed to remove users from role");
+  }
+
+  return { added: addUserIds.length, removed: removeUserIds.length };
 }

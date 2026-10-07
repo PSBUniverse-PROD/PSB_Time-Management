@@ -2335,6 +2335,12 @@ textarea.quote-field-control {
   filter: none;
 }
 
+/* Square icon mark: the base rule is sized for a wide wordmark logo. */
+.portal-login-logo.portal-login-logo--mark {
+  width: clamp(96px, 11vw, 132px);
+  max-width: 132px;
+}
+
 .psb-label {
   font-size: 12px;
   opacity: 0.7;

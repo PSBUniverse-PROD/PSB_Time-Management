@@ -9,7 +9,7 @@ import { hasAppAccess } from "@/core/auth/access";
 /**
  * Guards a module page. Access is decided by CORE: hasModuleAccess() calls
  * /api/auth/introspect with this deployment's NEXT_PUBLIC_MODULE_KEY and returns
- * core's verified authorizedForApp in dev/prod. Local mode uses appId and
+ * core's verified authorizedForApp in prod. Local and dev use appId and
  * the authenticated user's bootstrap roles instead of introspection.
  */
 export default function ModuleAccessGate({ children, appId }) {

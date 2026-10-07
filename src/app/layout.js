@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Inter, Manrope } from "next/font/google";
 import Providers from "@/app/providers";
+import psbIcon from "@/styles/psbuniverse_icon.svg";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -17,6 +18,9 @@ const manrope = Manrope({
 export const metadata = {
   title: "PSBUniverse",
   description: "PSBUniverse application workspace",
+  icons: {
+    icon: [{ url: psbIcon.src, type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({ children }) {

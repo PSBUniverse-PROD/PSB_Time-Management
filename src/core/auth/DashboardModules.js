@@ -9,7 +9,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEnvelope, faPhone } from "@fortawesome/free-solid-svg-icons";
 import AppIcon from "@/shared/components/ui/AppIcon";
 import { useAuth } from "@/core/auth/useAuth";
-import psbLogo from "@/styles/psb_logo_notitle.png";
+import psbLogo from "@/styles/psbuniverse_icon.svg";
 
 const DEFAULT_CARD_ICON = "table-cells-large";
 const DEFAULT_GROUP_ICON = "layer-group";

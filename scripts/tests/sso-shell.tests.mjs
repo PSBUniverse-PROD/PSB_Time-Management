@@ -322,7 +322,7 @@ async function createLogin(postOk, session, ssoEnabled = true) {
     "next/image": defaultExport("Image"), "next/navigation": { useRouter: () => ({ replace() {} }), useSearchParams: () => ({ get: () => null }) },
     "react-bootstrap": { Button: "Button", Form: "Form" },
     "@fortawesome/react-fontawesome": { FontAwesomeIcon: "Icon" }, "@fortawesome/free-solid-svg-icons": { faEye: {}, faEyeSlash: {} },
-    "@/styles/psb_logo.png": defaultExport("logo"),
+    "@/styles/psbuniverse_icon.svg": defaultExport("logo"),
     "@/core/supabase/client": { getSupabase: () => ({ auth: { signInWithPassword: async () => ({ data: { session: { access_token: "test-token" } } }) } }) },
     "@/core/auth/useAuth": { useAuth: () => ({ authUser: null }) },
     "@/shared/utils/toast": { toastError: (message) => errors.push(message), toastSuccess: (message) => successes.push(message) },
@@ -372,7 +372,7 @@ test("local mode uses Supabase auth and its login form without any SSO checks or
   assert.equal(login.ssoCalls, 0);
 });
 
-test("SSO clients run only in dev or prod and do no network work in local", async () => {
+test("SSO clients run only in prod and do no network work in local or dev", async () => {
   for (const environment of ["local", "dev", "prod"]) {
     let requests = 0;
     const browser = createBrowser("/login", "");
@@ -381,9 +381,9 @@ test("SSO clients run only in dev or prod and do no network work in local", asyn
       process: { env: { NEXT_PUBLIC_ENV: environment, NEXT_PUBLIC_MODULE_KEY: "time-tracker" } },
       fetch: async () => { requests++; return { ok: true, json: async () => ({ ...validSession(), authenticated: true }) }; },
     });
-    assert.equal(client.SSO_ENABLED, environment !== "local");
+    assert.equal(client.SSO_ENABLED, environment === "prod");
     const session = await client.validateSessionToken();
-    if (environment === "local") {
+    if (environment !== "prod") {
       assert.equal(session, null);
       await client.logout();
       await assert.rejects(client.extendSession(), /SSO is disabled/);

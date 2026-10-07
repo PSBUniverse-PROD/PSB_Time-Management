@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Form } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEye, faEyeSlash } from "@fortawesome/free-solid-svg-icons";
-import psbLogo from "@/styles/psb_logo.png";
+import psbLogo from "@/styles/psbuniverse_icon.svg";
 import { getSupabase } from "@/core/supabase/client";
 import { useAuth } from "@/core/auth/useAuth";
 import { toastError, toastSuccess } from "@/shared/utils/toast";
@@ -197,7 +197,7 @@ export default function LoginView() {
       <div className="portal-login-split">
         <aside className="portal-login-brand" aria-hidden="true">
           <div className="portal-login-brand-inner">
-            <Image src={psbLogo} alt="PSBUniverse logo" className="portal-login-logo" priority />
+            <Image src={psbLogo} alt="PSBUniverse logo" className="portal-login-logo portal-login-logo--mark" priority />
             <h1 className="psb-title mb-3">PSBUniverse</h1>
             <p className="psb-label mb-2">Operations Workspace</p>
             <p className="portal-brand-copy mb-0">Manage apps, users, and operations in one place.</p>
