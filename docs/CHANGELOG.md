@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 Server Session In Local And Dev
+
+- `getCurrentSession()` now resolves the signed-in user from the Supabase `sb-access-token` cookie when SSO is off (`local`, `dev`). Prod still reads and verifies `psb_session`.
+- Fixes a login redirect loop in modules whose server code identifies the user through `getCurrentSession()` (e.g. Time Tracker) after SSO was limited to prod.
+
+---
+
 ## 2026-10-08 SSO Limited To Prod
 
 - SSO is now enabled only for `NEXT_PUBLIC_ENV=prod`. `dev` behaves like `local`: per-app Supabase login and bootstrap roles, with no introspection, renewal, shared logout, or cross-app redirects.

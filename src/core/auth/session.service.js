@@ -9,6 +9,7 @@ import { cookies } from 'next/headers';
 import { getSupabaseAdmin } from '@/core/supabase/admin';
 import { generateToken, verifyToken } from '@/core/auth/jwt.utils';
 import { getPSBSessionCookieFromRequest } from '@/core/auth/cookies.utils';
+import { SSO_ENABLED } from '@/core/sso-client';
 
 // ── Session Creation ────────────────────────────────────────────────────
 /**
@@ -84,6 +85,12 @@ export async function getSessionFromRequest(request) {
 export async function getCurrentSession() {
   try {
     const cookieStore = await cookies();
+
+    // Local/dev: SSO is off, so there is no psb_session cookie to read.
+    if (!SSO_ENABLED) {
+      return await getLocalSession(cookieStore);
+    }
+
     const token = cookieStore.get('psb_session')?.value;
 
     if (!token) {
@@ -96,6 +103,60 @@ export async function getCurrentSession() {
     console.error('Session retrieval error:', error);
     return null;
   }
+}
+
+/**
+ * Session for local/dev, where sign-in is plain Supabase auth per app.
+ * Built from the sb-access-token cookie and the user's database rows so
+ * callers get the same payload shape as a verified SSO session
+ * (see createUserSession). Returns null when there is no valid sign-in.
+ */
+async function getLocalSession(cookieStore) {
+  const accessToken = cookieStore.get('sb-access-token')?.value;
+  if (!accessToken) {
+    return null;
+  }
+
+  const supabaseAdmin = getSupabaseAdmin();
+  const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(accessToken);
+  if (authError || !authData?.user) {
+    return null;
+  }
+  const authUser = authData.user;
+
+  let { data: dbUser } = await supabaseAdmin
+    .from('psb_s_user')
+    .select('*')
+    .eq('auth_user_id', authUser.id)
+    .maybeSingle();
+
+  if (!dbUser && authUser.email) {
+    ({ data: dbUser } = await supabaseAdmin
+      .from('psb_s_user')
+      .select('*')
+      .eq('email', authUser.email)
+      .maybeSingle());
+  }
+
+  if (!dbUser) {
+    return null;
+  }
+
+  const { data: userRoles } = await supabaseAdmin
+    .from('psb_m_userapproleaccess')
+    .select('app_id, role_id')
+    .eq('user_id', dbUser.user_id)
+    .eq('is_active', true);
+  const roles = userRoles || [];
+
+  return {
+    userId: dbUser.user_id,
+    authUserId: authUser.id,
+    email: authUser.email,
+    fullName: `${dbUser.first_name || ''} ${dbUser.last_name || ''}`.trim(),
+    modules: [...new Set(roles.map((r) => r.app_id).filter(Boolean))],
+    roles: [...new Set(roles.map((r) => r.role_id).filter(Boolean))],
+  };
 }
 
 // ── Module Authorization ────────────────────────────────────────────────
