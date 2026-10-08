@@ -827,7 +827,7 @@ function CardFormWithRoles({ kind, dialog, cardDraft, setCardDraft, roles, getCa
       </div>
       <div className="row g-3">
         <div className="col-6"><label className="form-label mb-1">Icon</label><Input value={cardDraft.icon} onChange={(e) => setCardDraft((p) => ({ ...p, icon: e.target.value }))} placeholder="bi-file-earmark" /></div>
-        <div className="col-6"><label className="form-label mb-1">Launch URL</label><Input value={cardDraft.route_path} onChange={(e) => setCardDraft((p) => ({ ...p, route_path: e.target.value }))} placeholder="/time-tracker" /></div>
+        <div className="col-6"><label className="form-label mb-1">Launch URL</label><Input value={cardDraft.route_path} onChange={(e) => setCardDraft((p) => ({ ...p, route_path: e.target.value }))} placeholder="/admin/status-setup or module:time-tracker/time-tracker" /></div>
       </div>
       <fieldset>
         <legend className="form-label mb-1" style={{ fontSize: "0.875rem" }}>Roles</legend>

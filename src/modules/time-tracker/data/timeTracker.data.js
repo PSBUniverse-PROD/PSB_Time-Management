@@ -165,16 +165,24 @@ export function lateDeductionMinutes(lateMinutes) {
 /** Minutes past a full hour of lateness that still cost only half an hour (11–45). */
 export const LATE_HALF_HOUR_UNTIL_MINUTES = 45;
 
+/** After the first full block, an early block counts when this close to complete. */
+export const EARLY_OVERTIME_GRACE_MINUTES = 10;
+
 /**
- * Overtime minutes earned by clocking in early. Mirrors lateDeductionMinutes:
- * split the earliness into full hours and the minutes past them:
- * 0–10 → +0, 11–45 → +30, 46–59 → +60.
- * e.g. 10 → 0, 11 → 30, 35 → 30, 45 → 30, 46 → 60, 53 → 60, 68 → 60, 71 → 90.
- * Seconds on the clock-in are dropped first (7:14:30 counts as 7:14), which
+ * Overtime minutes earned by clocking in early, counted backwards from the
+ * scheduled clock-in in OVERTIME_BLOCK_MINUTES blocks.
+ * - Less than one full block early earns nothing.
+ * - From the first full block on, a block also counts when the employee is
+ *   within EARLY_OVERTIME_GRACE_MINUTES of completing it.
+ * e.g. 14 → 0, 29 → 0, 30 → 30, 35 → 30, 49 → 30, 50 → 60, 53 → 60, 68 → 60,
+ * 79 → 60, 80 → 90.
+ * Seconds on the clock-in are dropped first (7:10:30 counts as 7:10), which
  * is why the earliness is rounded up to the whole minute.
  */
 export function earlyOvertimeMinutes(earlyMinutes) {
-  return lateDeductionMinutes(Math.ceil(earlyMinutes));
+  const early = Math.ceil(earlyMinutes);
+  if (early < OVERTIME_BLOCK_MINUTES) return 0;
+  return Math.floor((early + EARLY_OVERTIME_GRACE_MINUTES) / OVERTIME_BLOCK_MINUTES) * OVERTIME_BLOCK_MINUTES;
 }
 
 /** ISO weekdays, matching time_s_schedulemodelday.day_of_week (1 = Monday). */
@@ -312,9 +320,10 @@ export function summarizeScheduleDays(dayNumbers) {
  *   Late: time after the scheduled clock-out in 30-minute blocks
  *   (OVERTIME_BLOCK_MINUTES), rounded down (e.g. 1h46m → 1.5); leftover
  *   minutes aren't counted.
- *   Early: time before the scheduled clock-in, by the minutes past each full
- *   hour early: 0–10 → 0, 11–45 → 0.5 hr, 46–59 → 1 hr (for an 8:00 start:
- *   7:50 → 0, 7:25 → 0.5, 7:11 → 1, 6:52 → 1, 6:49 → 1.5).
+ *   Early: time before the scheduled clock-in, counted back in 30-minute
+ *   blocks. Under 30 minutes early earns nothing; after that a block also
+ *   counts when within 10 minutes of complete (for an 8:00 start:
+ *   7:46 → 0, 7:30 → 0.5, 7:11 → 0.5, 7:10 → 1, 7:07 → 1, 6:40 → 1.5).
  * - Regular time is rounded to half-hour steps by the minutes past the last
  *   full hour (0–15 down, 16–35 → .5, 36–59 up), so every day's total is a
  *   multiple of 0.5. Rest days are rounded the same way.
@@ -374,9 +383,10 @@ export function computeLogHours({ clockInDate, clockInTime, clockOutDate, clockO
   // (e.g. 8:10 → from 8:00, 8:40 → from 8:30, 8:50 → from 9:00, 9:05 → from 9:00).
   const countedInMin = shift.start + lateDeductionMinutes(inMin - shift.start);
 
-  // Early clock-in counts as overtime, with the lateness thresholds mirrored:
-  // per hour early, 0–10 min → 0, 11–45 → 0.5 hr, 46–59 → 1 hr
-  // (e.g. for 8:00: 7:50 → 0, 7:25 → 0.5, 7:07 → 1).
+  // Early clock-in counts as overtime, counted back from the scheduled start
+  // in 30-minute blocks: nothing under 30 minutes, then a block also counts
+  // when within 10 minutes of complete
+  // (e.g. for 8:00: 7:46 → 0, 7:25 → 0.5, 7:07 → 1).
   // Only time actually worked before the shift counts, so a session that ends
   // before the scheduled start is capped at its clock-out.
   const rawEarlyMin = Math.max(Math.min(outMin, shift.start) - inMin, 0);

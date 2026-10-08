@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "react-bootstrap";
 import Form from "react-bootstrap/Form";
-const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
+import { IS_MODULE } from "@/core/sso-client";
+
+// Core's own tabs are plain paths, so they stay on whichever site is serving
+// the page (localhost, dev or prod). A module app runs on another host, so
+// its tabs link back to the portal configured for that deployment.
+const CORE_PORTAL_URL = IS_MODULE
+  ? (process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com").replace(/\/+$/, "")
+  : "";
 const DALLAS_TIME_ZONE = "America/Chicago";
 
 function getDallasHour() {
@@ -128,11 +135,11 @@ export default function Header({
   const canSeeExamples = useMemo(() => hasExampleNavAccess(roles), [roles]);
 
   const tabs = useMemo(() => {
-    // These tabs represent the main PSBUniverse hub, so they always link back to
-    // the canonical core portal (NEXT_PUBLIC_CORE_PORTAL_URL). Building absolute
-    // URLs means that clicking them from a module subdomain (e.g.
-    // map.psbuniverse.com) performs a real browser navigation back to the root
-    // domain instead of keeping the user on the current subdomain.
+    // These tabs represent the main PSBUniverse hub. In a module app
+    // CORE_PORTAL_URL is the portal's address (NEXT_PUBLIC_CORE_PORTAL_URL), so
+    // clicking them from a module host (e.g. map.psbuniverse.com) performs a
+    // real browser navigation back to the portal. In core it is empty, so the
+    // links are plain paths on the current site.
     const nextTabs = [
       {
         key: "my-psb",

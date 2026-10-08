@@ -2079,6 +2079,32 @@
   font-size: 12px;
 }
 
+.tt-search-select,
+.tt-search-select .psb-ui-searchselect-toggle.form-select {
+  width: 100%;
+}
+
+.tt-search-select .psb-ui-searchselect-toggle.form-select {
+  display: flex;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #1a2e33;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: none;
+}
+
+.tt-search-select .psb-ui-searchselect-toggle.form-select:focus,
+.tt-search-select .psb-ui-searchselect-toggle.form-select:focus-visible,
+.tt-search-select .psb-ui-searchselect-toggle.form-select:hover {
+  border-color: var(--tt-spruce-600);
+  box-shadow: 0 0 0 3px rgba(44, 100, 107, 0.12);
+}
+
 .tt-modal-input:focus,
 .tt-modal-select:focus,
 .tt-modal-textarea:focus {

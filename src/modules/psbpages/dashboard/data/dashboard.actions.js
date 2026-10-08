@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
-import { applyAppBaseUrl, normalizeRoutePath, resolveAppBaseUrl } from "./dashboard.data";
+import { normalizeRoutePath, resolveAppBaseUrl, resolveCardRoutePath } from "./dashboard.data";
 
 // ── table names ────────────────────────────────────────────
 const APP_CARD_GROUP_TABLE =
@@ -190,6 +190,19 @@ export async function loadAssignedCardsFromDatabase() {
     const accessScope = await resolveUserAccessScope(supabaseAdmin, dbUser.user_id);
     if (!Array.isArray(accessScope.appIds) || accessScope.appIds.length === 0) return [];
 
+    // Site address of every active application by module_key, so a card can
+    // point at another app with "module:<module_key>/<path>" even when the
+    // user has no role in that application.
+    const { data: moduleAppRows } = await supabaseAdmin
+      .from("psb_s_application")
+      .select("module_key, dev_url, prod_url")
+      .eq("is_active", true);
+    const baseUrlByModuleKey = new Map(
+      (Array.isArray(moduleAppRows) ? moduleAppRows : [])
+        .filter((row) => hasValue(row?.module_key))
+        .map((row) => [String(row.module_key).trim().toLowerCase(), resolveAppBaseUrl(row, APP_ENV)]),
+    );
+
     const visibleCards = [];
 
     for (const appId of accessScope.appIds) {
@@ -238,9 +251,10 @@ export async function loadAssignedCardsFromDatabase() {
           appId: String(row?.app_id || row?.application_id || appId).trim(),
           cardName: readText(row, ["card_name", "name", "label"], "Module"),
           cardDescription: readText(row, ["card_desc", "description"], "Open module."),
-          routePath: applyAppBaseUrl(
-            normalizeRoutePath(readText(row, ["route_path", "route", "path", "href"], "#")),
+          routePath: resolveCardRoutePath(
+            readText(row, ["route_path", "route", "path", "href"], "#"),
             accessScope.appBaseUrlById.get(appId),
+            baseUrlByModuleKey,
           ),
           icon: readText(row, ["icon"], "table-cells-large"),
           cardOrder: asNumber(row?.display_order ?? row?.card_order ?? row?.sort_order ?? row?.order_no, 0),

@@ -12,6 +12,7 @@ import {
   Modal,
   MultiSelectDropdown,
   SearchBar,
+  SearchSelect,
   StatusBadge,
   TableZ,
   TABLE_FILTER_TYPES,
@@ -1577,6 +1578,7 @@ function PlaygroundTab() {
   const [dropdownValue,         setDropdownValue]         = useState(null);
   const [dropdownShow,          setDropdownShow]          = useState(false);
   const [multiDropdownValues,   setMultiDropdownValues]   = useState([]);
+  const [searchSelectValue,     setSearchSelectValue]     = useState(null);
   const [modalOpen,             setModalOpen]             = useState(false);
   const [modalSaving,    setModalSaving]    = useState(false);
   const [toastCount,     setToastCount]     = useState(0);
@@ -2211,6 +2213,26 @@ const handleSearch = async (value) => {
           />
           <p style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
             Selected: <code>{selectedStatusLabels}</code>
+          </p>
+
+          <p className={styles.playLabel} style={{ marginTop: 12 }}>Searchable Multi-select Dropdown</p>
+          <MultiSelectDropdown
+            searchable
+            options={DEMO_STATUS_OPTIONS}
+            selectedValues={multiDropdownValues}
+            onChange={setMultiDropdownValues}
+            placeholder="Select statuses"
+          />
+
+          <p className={styles.playLabel} style={{ marginTop: 12 }}>Search Select (single value)</p>
+          <SearchSelect
+            options={DEMO_STATUS_OPTIONS}
+            value={searchSelectValue}
+            onChange={setSearchSelectValue}
+            placeholder="Select a status"
+          />
+          <p style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
+            Selected: <code>{searchSelectValue ?? "None"}</code>
           </p>
 
           <p className={styles.playLabel} style={{ marginTop: 12 }}>Action Menu with Divider</p>
