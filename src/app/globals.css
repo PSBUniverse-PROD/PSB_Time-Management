@@ -903,6 +903,27 @@
   flex-wrap: wrap;
 }
 
+.psb-ui-table-filters-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.psb-ui-table-filters-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.psb-ui-table-filters-shell--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
 .psb-ui-table-search-shell {
   width: 100%;
 }

@@ -3,7 +3,8 @@
 #
 # This script:
 #   1. Connects the core remote (if missing) with push disabled
-#   2. Installs npm packages (if node_modules is missing)
+#   2. Adds any npm dependencies core requires that package.json is missing
+#      (module repos only), then installs packages if any are not on disk
 #   3. Creates .env.local with template (if missing) — includes SSO config
 #   4. Validates SSO authentication configuration
 #   5. Adds VS Code read-only rules for protected folders (module repos only)
@@ -69,7 +70,40 @@ if ($isModuleRepo) {
 
 # ── 2. npm install ──────────────────────────────────────────────
 
-if (-not (Test-Path "node_modules")) {
+$installNeeded = $false
+
+# Module repos: core modules import packages listed in core's package.json.
+# Add any that this repo's package.json is missing (add-only, see the script).
+if ($isModuleRepo) {
+    git fetch core main 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[2/5] WARNING: could not fetch core - skipping core dependency check." -ForegroundColor Yellow
+    } else {
+        node scripts/sync-core-deps.mjs
+        if ($LASTEXITCODE -eq 10) {
+            $installNeeded = $true
+        } elseif ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR: core dependency check failed." -ForegroundColor Red
+            exit 1
+        }
+    }
+}
+
+# Install when any package declared in package.json is not on disk.
+if (-not $installNeeded) {
+    $packageJson = Get-Content "package.json" -Raw | ConvertFrom-Json
+    foreach ($section in @("dependencies", "devDependencies")) {
+        if (-not $packageJson.$section) { continue }
+        foreach ($dependency in $packageJson.$section.PSObject.Properties.Name) {
+            if (-not (Test-Path (Join-Path "node_modules" $dependency))) {
+                $installNeeded = $true
+                break
+            }
+        }
+    }
+}
+
+if ($installNeeded) {
     Write-Host "`n[2/5] Installing packages..." -ForegroundColor Green
     npm install
     if ($LASTEXITCODE -ne 0) {

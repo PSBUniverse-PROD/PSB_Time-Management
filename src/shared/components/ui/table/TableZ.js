@@ -268,6 +268,9 @@ export default function TableZ({
   hideSearch = false,
   hideFooter = false,
   renderDetail,
+  defaultFiltersExpanded = true,
+  filterToolbarAction = null,
+  stickyFilters = false,
 }) {
   const tableId = useId();
   const controlledMode = isPlainObject(state) && typeof onChange === "function";
@@ -394,7 +397,7 @@ export default function TableZ({
     [columnSizing],
   );
 
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
+  const [filtersExpanded, setFiltersExpanded] = useState(defaultFiltersExpanded);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [isBatchSubmitting, setIsBatchSubmitting] = useState(false);
   const [activeResizeColumnKey, setActiveResizeColumnKey] = useState("");
@@ -1039,16 +1042,28 @@ export default function TableZ({
       {batchControls}
       {/* Filter Toolbar */}
       {hasFilterControls ? (
-        <div className={`psb-ui-table-filters-shell${filtersExpanded ? " psb-ui-table-filters-shell--inline" : ""}`}>
-          <button
-            type="button"
-            className="psb-ui-table-filters-toggle"
-            aria-expanded={filtersExpanded}
-            onClick={() => setFiltersExpanded((current) => !current)}
-          >
-            <FontAwesomeIcon icon={filtersExpanded ? faChevronUp : faChevronDown} aria-hidden="true" />
-            <span>Filters</span>
-          </button>
+        <div
+          className={[
+            "psb-ui-table-filters-shell",
+            filtersExpanded && !filterToolbarAction ? "psb-ui-table-filters-shell--inline" : "",
+            stickyFilters ? "psb-ui-table-filters-shell--sticky" : "",
+          ].filter(Boolean).join(" ")}
+        >
+          <div className="psb-ui-table-filters-header">
+            <button
+              type="button"
+              className="psb-ui-table-filters-toggle"
+              aria-expanded={filtersExpanded}
+              onClick={() => setFiltersExpanded((current) => !current)}
+            >
+              <FontAwesomeIcon icon={filtersExpanded ? faChevronUp : faChevronDown} aria-hidden="true" />
+              <span>Filters</span>
+            </button>
+
+            {filterToolbarAction ? (
+              <div className="psb-ui-table-filters-action">{filterToolbarAction}</div>
+            ) : null}
+          </div>
 
           {filtersExpanded ? (
             <div className="psb-ui-table-filters" role="group" aria-label="Table filters">
