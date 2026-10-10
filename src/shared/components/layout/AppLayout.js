@@ -16,7 +16,7 @@ import { SSO_ENABLED, IS_MODULE, logout as ssoLogout, redirectToLogin } from "@/
 import { isLoginPath, validateRedirectUrl } from "@/core/auth/redirect-validator";
 import { toastError } from "@/shared/utils/toast";
 
-const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
+const CORE_PORTAL_URL = (process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com").replace(/\/+$/, "");
 const ENV = process.env.NEXT_PUBLIC_ENV || "local";
 const IS_PRODUCTION = ENV === "prod";
 

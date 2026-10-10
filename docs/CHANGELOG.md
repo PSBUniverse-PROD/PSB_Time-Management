@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-10 Core Portal URL Tolerates A Trailing Slash
+
+- `NEXT_PUBLIC_CORE_PORTAL_URL` now has trailing slashes stripped wherever a path is appended to it (`sso-client.js`, `LoginView.jsx`, `AppLayout.js`; `Header.js` already did this).
+- Fixes modules showing "Unable to verify your session with core" when the variable ended in `/`: the resulting `//api/auth/introspect` request was redirected by core without CORS headers and blocked by the browser.
+
+---
+
 ## 2026-10-08 Server Session In Local And Dev
 
 - `getCurrentSession()` now resolves the signed-in user from the Supabase `sb-access-token` cookie when SSO is off (`local`, `dev`). Prod still reads and verifies `psb_session`.

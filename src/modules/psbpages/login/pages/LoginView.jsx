@@ -17,7 +17,7 @@ import {
 } from "../data/login.data";
 import { resolveUsernameToEmail } from "../data/login.actions";
 
-const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
+const CORE_PORTAL_URL = (process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com").replace(/\/+$/, "");
 const ENV = process.env.NEXT_PUBLIC_ENV || "local";
 const DEFAULT_REDIRECT = ENV === "prod" ? `${CORE_PORTAL_URL}/dashboard` : "/dashboard";
 

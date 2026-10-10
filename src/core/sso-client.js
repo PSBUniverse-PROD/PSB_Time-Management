@@ -24,7 +24,10 @@ const MODULE_KEY = (process.env.NEXT_PUBLIC_MODULE_KEY || "").trim();
 // (.psbuniverse.com); dev runs on *.vercel.app hosts, which browsers never
 // let share cookies, so dev signs in per app like local does.
 export const SSO_ENABLED = (process.env.NEXT_PUBLIC_ENV || "local") === "prod";
-const INTROSPECT_CORE_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
+// Trailing slashes are stripped: the paths below are appended directly, and a
+// double slash ("//api/auth/introspect") makes core answer with a redirect
+// that has no CORS headers, which the browser blocks.
+const INTROSPECT_CORE_URL = (process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com").replace(/\/+$/, "");
 // Core resolves introspection same-origin; a module (any non-core module_key)
 // calls the core portal cross-origin with credentials.
 // Core itself: leave NEXT_PUBLIC_MODULE_KEY unset so the question is simply
@@ -269,7 +272,7 @@ export async function logout() {
 
 // ── Navigation ──────────────────────────────────────────────────────────────
 
-const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
+const CORE_PORTAL_URL = (process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com").replace(/\/+$/, "");
 const ENV = process.env.NEXT_PUBLIC_ENV || "local";
 
 /**
