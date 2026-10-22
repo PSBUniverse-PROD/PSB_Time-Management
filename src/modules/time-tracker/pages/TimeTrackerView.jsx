@@ -29,6 +29,7 @@ import {
   faChevronRight,
   faDownload,
   faGear,
+  faPen,
   faPlus,
   faTable,
   faClock,
@@ -1173,24 +1174,68 @@ function TimeLogTable({
         </div>
       </div>
 
-      <TableZ
-        data={weekRows}
-        columns={LOG_TABLE_COLUMNS}
-        rowIdKey="id"
-        actions={[
-          {
-            key: "edit",
-            label: "Edit",
-            icon: "pen",
-            onClick: (row) => onEdit(row),
-          },
-        ]}
-        loading={loading}
-        loadingMessage="Loading time logs..."
-        emptyMessage="No time logs for this week."
-        hideSearch
-        hideFooter
-      />
+      <div className="tt-log-table-desktop">
+        <TableZ
+          data={weekRows}
+          columns={LOG_TABLE_COLUMNS}
+          rowIdKey="id"
+          actions={[
+            {
+              key: "edit",
+              label: "Edit",
+              icon: "pen",
+              onClick: (row) => onEdit(row),
+            },
+          ]}
+          loading={loading}
+          loadingMessage="Loading time logs..."
+          emptyMessage="No time logs for this week."
+          hideSearch
+          hideFooter
+        />
+      </div>
+
+      {/* Phones: one card per day instead of the table (shown by timeTracker.css). */}
+      <div className="tt-day-cards">
+        {loading ? (
+          <div className="tt-day-cards-empty">Loading time logs...</div>
+        ) : (
+          weekRows.map((row) => {
+            const isFuture = row.isoDate > getAppTodayStr();
+            return (
+              <div
+                key={row.id}
+                className={`tt-day-card${row.isToday ? " is-today" : ""}${isFuture && !row.hasData ? " is-future" : ""}`}
+              >
+                <div className="tt-day-card-date">
+                  <span className="tt-day-card-weekday">{row.isToday ? "Today" : row.dayName.slice(0, 3)}</span>
+                  <span className="tt-day-card-day">{row.shortDate}</span>
+                </div>
+                <div className="tt-day-card-times">
+                  {row.hasData ? (
+                    <>
+                      {row.clockedInTime} → {row.clockedOutTime || <span className="tt-day-card-now">now</span>}
+                    </>
+                  ) : (
+                    <span className="tt-day-card-none">{isFuture ? "Upcoming" : "No entry"}</span>
+                  )}
+                </div>
+                <span className="tt-day-card-hours">
+                  {row.hasData && row.hours != null ? `${Number(row.hours).toFixed(2)} h` : "—"}
+                </span>
+                <button
+                  type="button"
+                  className="tt-day-card-edit"
+                  onClick={() => onEdit(row)}
+                  aria-label={`Edit ${row.dayName}`}
+                >
+                  <FontAwesomeIcon icon={faPen} />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

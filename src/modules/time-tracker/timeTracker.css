@@ -2851,3 +2851,343 @@
   box-shadow: 0 0 0 2px #1e4c5c;
 }
 
+
+/* Phone-sized screens: plain white cover over the whole page, including the
+   navbar. Rendered by TimeTrackerPage only for users not on
+   TIME_TRACKER_MOBILE_ALLOWED_USERS. Hidden on larger screens. */
+.tt-mobile-block {
+  display: none;
+}
+
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  .tt-mobile-block {
+    display: block;
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    background: #ffffff;
+    z-index: 2147483647;
+    touch-action: none;
+  }
+
+  body:has(.tt-mobile-block) {
+    overflow: hidden;
+  }
+}
+
+/* ─── Phone layout (≤ 767px) ─────────────────────────────────
+   Clock card on top, one card per day instead of the log table, the week
+   summary below, and the navigation as a bottom tab bar. Desktop and tablet
+   are untouched; the core navbar above the page is not styled here.
+   Selectors start with .tt-app-layout so they win over the older
+   max-width: 768px rules earlier in this file. */
+.tt-day-cards {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .tt-app-layout {
+    zoom: 1;
+    flex-direction: column;
+    min-height: 0;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Clock card */
+  .tt-app-layout .tt-sidebar {
+    width: auto;
+    min-width: 0;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0.6rem;
+    margin: 0.75rem;
+    padding: 0.9rem;
+    background: #ffffff;
+    border: 1px solid #e1ebec;
+    border-radius: 14px;
+    box-shadow: none;
+  }
+
+  .tt-app-layout .tt-module-identity {
+    display: none;
+  }
+
+  .tt-app-layout .tt-sidebar-clock {
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .tt-app-layout .tt-sidebar-clock-time {
+    font-size: 1.6rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .tt-app-layout .tt-sidebar-clock-date {
+    display: block;
+    font-size: 0.75rem;
+    color: #5b7378;
+  }
+
+  .tt-app-layout .tt-sidebar-status-card {
+    order: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+  }
+
+  .tt-app-layout .tt-timezone-note {
+    margin: 0;
+    font-size: 0.7rem;
+  }
+
+  .tt-app-layout .tt-clock-btn {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    padding: 0.85rem 1rem;
+    font-size: 1rem;
+    border-radius: 12px;
+  }
+
+  /* Bottom tab bar */
+  .tt-app-layout .tt-sidebar-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0;
+    width: auto;
+    margin: 0;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    background: #ffffff;
+    border-top: 1px solid #e1ebec;
+  }
+
+  .tt-app-layout .tt-sidebar-nav-label {
+    display: none;
+  }
+
+  .tt-app-layout .tt-nav-item {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 4px 2px;
+    border-radius: 8px;
+    background: none;
+    font-size: 0.68rem;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
+    color: #5b7378;
+  }
+
+  .tt-app-layout .tt-nav-item .tt-nav-icon {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+
+  .tt-app-layout .tt-nav-item.active {
+    background: #e8f3f3;
+    color: #16383e;
+    font-weight: 600;
+  }
+
+  .tt-app-layout .tt-nav-dots {
+    position: absolute;
+    top: 2px;
+    right: 18%;
+  }
+
+  /* Week header: ‹ week › centred, actions below; no CSV export on phones */
+  .tt-app-layout .tt-main {
+    min-height: 0;
+    padding: 0 0.75rem;
+  }
+
+  .tt-app-layout .tt-table-card {
+    flex: none;
+    background: transparent;
+  }
+
+  .tt-app-layout .tt-table-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0 0.6rem;
+  }
+
+  .tt-app-layout .tt-table-header-left {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .tt-app-layout .tt-table-header-left .tt-week-picker {
+    order: 1;
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  .tt-app-layout .tt-table-header-left > .tt-nav-arrow:nth-of-type(2) {
+    order: 2;
+  }
+
+  .tt-app-layout .tt-table-title {
+    align-items: center;
+    text-align: center;
+  }
+
+  .tt-app-layout .tt-table-header-actions {
+    flex: 1 1 100%;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .tt-app-layout .tt-logs-toolbar {
+    display: none;
+  }
+
+  /* Day cards instead of the table */
+  .tt-app-layout .tt-log-table-desktop {
+    display: none;
+  }
+
+  .tt-app-layout .tt-day-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 0.75rem;
+  }
+
+  .tt-day-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: #ffffff;
+    border: 1px solid #e1ebec;
+    border-radius: 10px;
+  }
+
+  .tt-day-card.is-today {
+    border: 1.5px solid #1f6f78;
+    background: #f1f8f8;
+  }
+
+  .tt-day-card.is-future {
+    opacity: 0.6;
+  }
+
+  .tt-day-card-date {
+    flex-shrink: 0;
+    width: 52px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .tt-day-card-weekday {
+    font-size: 0.7rem;
+    color: #5b7378;
+  }
+
+  .tt-day-card.is-today .tt-day-card-weekday {
+    color: #1f6f78;
+    font-weight: 600;
+  }
+
+  .tt-day-card-day {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #16383e;
+    white-space: nowrap;
+  }
+
+  .tt-day-card-times {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.8rem;
+    color: #1a2e33;
+  }
+
+  .tt-day-card-none {
+    color: #94a3a6;
+  }
+
+  .tt-day-card-now {
+    color: #15803d;
+    font-weight: 600;
+  }
+
+  .tt-day-card-hours {
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .tt-day-card-edit {
+    border: 0;
+    background: none;
+    color: #5b7378;
+    padding: 6px;
+    border-radius: 6px;
+  }
+
+  .tt-day-cards-empty {
+    padding: 1rem 0;
+    font-size: 0.8rem;
+    color: #5b7378;
+    text-align: center;
+  }
+
+  /* Week summary below the days; Submit / Recall kept in view above the tab bar */
+  .tt-app-layout .tt-summary-panel {
+    flex: none;
+    width: auto;
+    max-width: none;
+    margin: 0 0.75rem 0.75rem;
+    background: #ffffff;
+    border: 1px solid #e1ebec;
+    border-radius: 14px;
+  }
+
+  /* Spans the panel edge to edge (cancels .tt-summary-body's 1.25rem padding). */
+  .tt-app-layout .tt-summary-actions-bar {
+    position: sticky;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    z-index: 5;
+    margin: 0.25rem -1.25rem -1.25rem;
+    padding: 0.6rem 1.25rem 0.75rem;
+    background: #ffffff;
+    border-top: 1px solid #e1ebec;
+    border-radius: 0 0 14px 14px;
+  }
+}
+

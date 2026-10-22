@@ -10,7 +10,7 @@
  */
 import { redirect } from "next/navigation";
 import TimeTrackerView from "./TimeTrackerView";
-import { loadTimeTrackerData } from "../data/timeTracker.actions";
+import { loadTimeTrackerData, isMobileAllowedUser } from "../data/timeTracker.actions";
 import { getAppTodayDate } from "../data/timeTracker.data";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +39,10 @@ export default async function TimeTrackerPage() {
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
 
-  const initialData = await loadTimeTrackerData(toDateStr(monday), toDateStr(sunday));
+  const [initialData, mobileAllowed] = await Promise.all([
+    loadTimeTrackerData(toDateStr(monday), toDateStr(sunday)),
+    isMobileAllowedUser(),
+  ]);
 
   // The sign-in expired or was never valid. `/login` is rewritten to the
   // PSBUniverse login page, which reads `redirect` to send the user back to
@@ -48,5 +51,12 @@ export default async function TimeTrackerPage() {
     redirect("/login?redirect=/time-tracker");
   }
 
-  return <TimeTrackerView initialData={initialData} />;
+  // Phones: a plain white cover (see .tt-mobile-block in timeTracker.css),
+  // except for users on TIME_TRACKER_MOBILE_ALLOWED_USERS.
+  return (
+    <>
+      {!mobileAllowed && <div className="tt-mobile-block" aria-hidden="true" />}
+      <TimeTrackerView initialData={initialData} />
+    </>
+  );
 }

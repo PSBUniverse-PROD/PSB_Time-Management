@@ -44,6 +44,43 @@ async function getSessionUserId() {
   return session?.userId || null;
 }
 
+/**
+ * Whether the signed-in user may use the Time Tracker on a phone.
+ *
+ * Business Rule:
+ * On phone-sized screens the page is covered by a plain white overlay,
+ * except for the users listed in TIME_TRACKER_MOBILE_ALLOWED_USERS
+ * (comma-separated usernames, set per environment). A user matches by
+ * username or by the part of their email before "@", ignoring case.
+ * Unset or empty = nobody is allowed on a phone.
+ */
+export async function isMobileAllowedUser() {
+  const allowed = new Set(
+    String(process.env.TIME_TRACKER_MOBILE_ALLOWED_USERS || "")
+      .split(",")
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (allowed.size === 0) return false;
+
+  const userId = await getSessionUserId();
+  if (!userId) return false;
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("psb_s_user")
+    .select("username, email")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data) {
+    if (error) console.error("isMobileAllowedUser:", describeError(error));
+    return false;
+  }
+
+  const username = String(data.username || "").trim().toLowerCase();
+  const emailName = String(data.email || "").split("@")[0].trim().toLowerCase();
+  return (username && allowed.has(username)) || (emailName && allowed.has(emailName));
+}
+
 /** psb_s_application.module_key for this module (see ../index.js). */
 const TIME_TRACKER_MODULE_KEY = "time-tracker";
 

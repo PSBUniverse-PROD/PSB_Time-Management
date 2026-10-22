@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useId, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import Form from "react-bootstrap/Form";
 import { Dropdown as BootstrapDropdown } from "react-bootstrap";
@@ -27,7 +27,17 @@ MultiSelectToggle.displayName = "MultiSelectToggle";
 // FilterPanel's scrollable popover). react-bootstrap still supplies
 // positioning props (style, placement) to this component as normal; only
 // the DOM location changes, not the Popper positioning logic.
+// There is no document while the server renders the page. This reads false on
+// the server and during hydration, then true in the browser, so the portal is
+// only created where document.body exists.
+const subscribeToNothing = () => () => {};
+const readIsBrowser = () => true;
+const readIsServer = () => false;
+
 const PortalMenu = forwardRef(({ children, style, className, "aria-labelledby": labeledBy }, ref) => {
+  const isBrowser = useSyncExternalStore(subscribeToNothing, readIsBrowser, readIsServer);
+  if (!isBrowser) return null;
+
   return createPortal(
     <div
       ref={ref}

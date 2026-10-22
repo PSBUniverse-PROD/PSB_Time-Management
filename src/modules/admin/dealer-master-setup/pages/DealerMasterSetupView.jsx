@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
 import { loadUsCitiesByStateAction } from "../data/dealerMasterSetup.actions.js";
+import DealerLoginModal from "./DealerLoginModal.jsx";
 import {
   DEALER_FORM_SECTIONS,
   createEmptyDealerDraft,
@@ -493,7 +494,7 @@ function DealerHeader({ hasPendingChanges, pendingSummary, isSavingBatch, isMuta
  * (Edit / Restore / Deactivate / Delete). Deletion always confirms
  * first because it cannot be undone once the batch is saved.
  */
-function DealerTable({ decoratedDealers, isMutatingAction, isSavingBatch, pendingDeactivatedDealerIds, openEditDealerDialog, openToggleDealerDialog, openDeactivateDealerDialog, stageHardDeleteDealer, onUndoBatchAction }) {
+function DealerTable({ decoratedDealers, isMutatingAction, isSavingBatch, pendingDeactivatedDealerIds, openEditDealerDialog, openToggleDealerDialog, openDeactivateDealerDialog, openDealerLogin, stageHardDeleteDealer, onUndoBatchAction }) {
   const columns = useMemo(
     () => [
       {
@@ -535,11 +536,12 @@ function DealerTable({ decoratedDealers, isMutatingAction, isSavingBatch, pendin
   const actions = useMemo(
     () => [
       { key: "edit-dealer", label: "Edit", type: "secondary", icon: "pen", disabled: () => isMutatingAction || isSavingBatch, onClick: (row) => openEditDealerDialog(row) },
+      { key: "login-dealer", label: "Login", type: "secondary", icon: "key", disabled: (row) => isMutatingAction || isSavingBatch || isTempDealerId(row?.dealer_id), onClick: (row) => openDealerLogin(row) },
       { key: "restore-dealer", label: "Restore", type: "secondary", icon: "rotate-left", visible: (row) => !Boolean(row?.is_active_bool) || pendingDeactivatedDealerIds.has(String(row?.dealer_id ?? "")), disabled: () => isMutatingAction || isSavingBatch, onClick: (row) => openToggleDealerDialog(row) },
       { key: "deactivate-dealer", label: "Deactivate", type: "secondary", icon: "ban", visible: (row) => Boolean(row?.is_active_bool) && !pendingDeactivatedDealerIds.has(String(row?.dealer_id ?? "")), disabled: () => isMutatingAction || isSavingBatch, onClick: (row) => openDeactivateDealerDialog(row) },
       { key: "delete-dealer", label: "Delete", type: "danger", icon: "trash", confirm: true, confirmMessage: (row) => `Permanently delete ${row?.dealer_name || "this dealer"}? This action cannot be undone.`, disabled: () => isMutatingAction || isSavingBatch, onClick: (row) => stageHardDeleteDealer(row) },
     ],
-    [isMutatingAction, isSavingBatch, openDeactivateDealerDialog, openEditDealerDialog, openToggleDealerDialog, pendingDeactivatedDealerIds, stageHardDeleteDealer],
+    [isMutatingAction, isSavingBatch, openDeactivateDealerDialog, openDealerLogin, openEditDealerDialog, openToggleDealerDialog, pendingDeactivatedDealerIds, stageHardDeleteDealer],
   );
 
   return (
@@ -715,6 +717,8 @@ function DealerDialog({ dialog, dealerDraft, isMutatingAction, isSavingBatch, st
  */
 export default function DealerMasterSetupView({ dealers, states }) {
   const hook = useDealerMasterSetup({ dealers, states });
+  const [loginDealer, setLoginDealer] = useState(null);
+  const closeDealerLogin = useCallback(() => setLoginDealer(null), []);
 
   return (
     <main className="container py-4">
@@ -735,6 +739,7 @@ export default function DealerMasterSetupView({ dealers, states }) {
         openEditDealerDialog={hook.openEditDealerDialog}
         openToggleDealerDialog={hook.openToggleDealerDialog}
         openDeactivateDealerDialog={hook.openDeactivateDealerDialog}
+        openDealerLogin={setLoginDealer}
         stageHardDeleteDealer={hook.stageHardDeleteDealer}
         onUndoBatchAction={hook.unstageHardDeleteDealer}
       />
@@ -754,6 +759,9 @@ export default function DealerMasterSetupView({ dealers, states }) {
         submitToggleDealer={hook.submitToggleDealer}
         submitDeactivateDealer={hook.submitDeactivateDealer}
       />
+      {loginDealer ? (
+        <DealerLoginModal key={String(loginDealer.dealer_id)} dealer={loginDealer} onClose={closeDealerLogin} />
+      ) : null}
     </main>
   );
 }

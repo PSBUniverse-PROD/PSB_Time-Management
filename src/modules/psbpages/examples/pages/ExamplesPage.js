@@ -4317,6 +4317,262 @@ function TableZTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Dealer Linking tab
+// ---------------------------------------------------------------------------
+
+const SNIPPET_DEALER_LINK_ACTIONS = `// src/modules/<your-module>/data/<name>.actions.js  ("use server" file)
+import { getCurrentSession } from "@/core/auth/session.service";
+import {
+  getDealerLink,
+  linkRecordToDealer,
+  listDealersForPicker,
+  unlinkRecordFromDealer,
+} from "@/core/dealer/dealerLinks";
+
+// Your app's module_key from psb_s_application. Write it once, here.
+const DEALER_LINK_MODULE_KEY = "my-app";
+
+// Dealer choices for the picker, plus the dealer this record is linked to now.
+export async function loadMyRecordDealerOptions(recordId) {
+  const [dealers, link] = await Promise.all([
+    listDealersForPicker(),
+    recordId ? getDealerLink({ moduleKey: DEALER_LINK_MODULE_KEY, recordId }) : null,
+  ]);
+  const options = dealers.map((dealer) => ({
+    value: String(dealer.dealer_id),
+    label: dealer.dealer_code ? dealer.dealer_name + " (" + dealer.dealer_code + ")" : dealer.dealer_name,
+  }));
+  return { dealers: options, linkedDealerId: link ? String(link.dealer_id) : "" };
+}
+
+// Saves the picker. An empty choice removes the link.
+export async function setMyRecordDealer(recordId, dealerId) {
+  const session = await getCurrentSession();
+  if (!session?.userId) throw new Error("Please sign in again.");
+
+  if (!dealerId) {
+    await unlinkRecordFromDealer({ moduleKey: DEALER_LINK_MODULE_KEY, recordId });
+    return { linked: false };
+  }
+  const dealer = await linkRecordToDealer({
+    moduleKey: DEALER_LINK_MODULE_KEY,
+    recordId,
+    dealerId,
+    userId: Number(session.userId) || null,
+  });
+  return { linked: true, dealer };
+}`;
+
+const SNIPPET_DEALER_LINK_PICKER = `// Your form component ("use client" file)
+import { SearchSelect, toastError } from "@/shared/components/ui";
+import { loadMyRecordDealerOptions, setMyRecordDealer } from "../data/myRecord.actions";
+
+// Keep the dealer OUT of the record's own form data: it is not a column of your table.
+const [dealerOptions, setDealerOptions] = useState([]);
+const [linkedDealerId, setLinkedDealerId] = useState("");
+
+useEffect(() => {
+  loadMyRecordDealerOptions(record?.id ?? null)
+    .then((result) => {
+      setDealerOptions(result.dealers);
+      setLinkedDealerId(result.linkedDealerId);
+    })
+    .catch(() => toastError("Unable to load the dealer list."));
+}, [record?.id]);
+
+<SearchSelect
+  options={dealerOptions}
+  value={linkedDealerId || null}
+  onChange={(value) => setLinkedDealerId(value == null ? "" : String(value))}
+  placeholder="Not linked - pick a dealer"
+  searchPlaceholder="Search dealers..."
+/>
+
+// AFTER the record itself is saved (a new record needs its id first):
+try {
+  await setMyRecordDealer(savedRecord.id, linkedDealerId || null);
+} catch (err) {
+  toastError("The record was saved, but the dealer link was not: " + (err?.message || "unknown error"));
+}`;
+
+const SNIPPET_DEALER_LINK_DELETE = `// In your delete action, after the record is deleted.
+// A leftover link is harmless, so a failure here must not block the delete.
+try {
+  await unlinkRecordFromDealer({ moduleKey: DEALER_LINK_MODULE_KEY, recordId: id });
+} catch (linkError) {
+  console.error("[deleteMyRecord] Failed to remove dealer link:", linkError?.message);
+}`;
+
+const SNIPPET_DEALER_LINK_SOURCE = `// PSBUniverse-core ONLY: src/core/dealer/dealerRecordSources.js
+// Add one entry inside DEALER_RECORD_SOURCES, keyed by your module_key.
+// The table and column names below are EXAMPLES. Use your real ones.
+"my-app": {
+  appLabel: "My App",          // shown to the dealer
+  recordLabel: "Order",        // what one record is called
+  table: "myapp_t_orders",     // your table
+  idColumn: "id",              // the column your record id is in
+  // ONLY columns a dealer may see. Never internal notes, costs or payment details.
+  select: "id, order_name, status_name, city, state_code, order_date, total_amount",
+  toRecord(row) {
+    return {
+      title: text(row.order_name) || "Order",
+      status: text(row.status_name),
+      location: [row.city, row.state_code].map(text).filter(Boolean).join(", "),
+      reference: text(row.id),
+      sortDate: text(row.order_date),
+      dateText: dateText(row.order_date),
+      amountText: moneyText(row.total_amount),
+      details: [
+        ["Order", text(row.order_name)],
+        ["Order date", dateText(row.order_date)],
+      ],
+    };
+  },
+},`;
+
+const DEALER_LINKING_STEPS = [
+  {
+    key: "dealer-what",
+    title: "What it is and when to use it",
+    content: (
+      <div className={styles.refBody}>
+        <p className={styles.stepNote}>
+          Dealer linking says <strong>this record belongs to that dealer</strong>. The dealer then sees the record in the
+          dealer portal (<code>/dealer/account</code>, Projects page). Only the link is saved, in <code>psb_m_dealerlink</code>:
+          which dealer, which app, which record. The portal reads the record live from your own table, so the dealer always
+          sees current data.
+        </p>
+        <p className={styles.ruleHeading}>Use it when</p>
+        <ul className={styles.ruleList}>
+          <li>A dealer should see this record in their portal (an order, a project, a quote).</li>
+          <li>Staff pick the dealer from a list.</li>
+        </ul>
+        <p className={styles.ruleHeading}>Do not use it when</p>
+        <ul className={styles.ruleList}>
+          <li>The record is internal only (staff notes, costs, payroll).</li>
+          <li>You only need to show a dealer name on screen. Read <code>psb_s_dealermaster</code> instead.</li>
+          <li>A record needs more than one dealer. One record has one dealer only.</li>
+        </ul>
+        <p className={styles.stepNote}>
+          Working example: Project Map (<code>loadProjectDealerOptions</code>, <code>setProjectDealerLink</code> and the
+          Linked Dealer picker in <code>AddProjectForm.jsx</code>). Full guide: Documentation, Dealer Linking.
+        </p>
+      </div>
+    ),
+  },
+  {
+    key: "dealer-step-1",
+    title: "Step 1: Find your module_key",
+    content: (
+      <div className={styles.refBody}>
+        <p className={styles.stepNote}>
+          Open your module <code>index.js</code> and copy its <code>module_key</code>. It must match an <strong>active</strong> row
+          in <code>psb_s_application</code>, or linking fails with Unknown application. Write it once at the top of your
+          actions file as <code>DEALER_LINK_MODULE_KEY</code> (see step 2).
+        </p>
+      </div>
+    ),
+  },
+  {
+    key: "dealer-step-2",
+    title: "Step 2: Add two server actions",
+    content: (
+      <div className={styles.refBody}>
+        <p className={styles.stepNote}>
+          File: <code>src/modules/&lt;your-module&gt;/data/&lt;name&gt;.actions.js</code>. One action loads the dealer list and the
+          current link; the other saves the choice. Rename <code>MyRecord</code> to your record name.
+        </p>
+        <Snippet title="Server actions" code={SNIPPET_DEALER_LINK_ACTIONS} />
+      </div>
+    ),
+  },
+  {
+    key: "dealer-step-3",
+    title: "Step 3: Add the Linked Dealer picker to your form",
+    content: (
+      <div className={styles.refBody}>
+        <p className={styles.stepNote}>
+          Use the shared <code>SearchSelect</code>. Keep the dealer outside your form data, and save the link after the record is
+          saved, on its own, so a link problem never loses the record.
+        </p>
+        <Snippet title="Form picker and save" code={SNIPPET_DEALER_LINK_PICKER} />
+      </div>
+    ),
+  },
+  {
+    key: "dealer-step-4",
+    title: "Step 4: Remove the link when a record is deleted",
+    content: (
+      <div className={styles.refBody}>
+        <Snippet title="Delete action" code={SNIPPET_DEALER_LINK_DELETE} />
+      </div>
+    ),
+  },
+  {
+    key: "dealer-step-5",
+    title: "Step 5: Tell the dealer portal about your records (PSBUniverse-core)",
+    content: (
+      <div className={styles.refBody}>
+        <p className={styles.stepNote}>
+          File: <code>src/core/dealer/dealerRecordSources.js</code>, in <strong>PSBUniverse-core only</strong>. This is the one
+          allowed edit inside <code>src/core</code>, and only to add your entry. Have a senior review it. The existing
+          <code>project-map</code> entry is your working example.
+        </p>
+        <Snippet title="Portal entry" code={SNIPPET_DEALER_LINK_SOURCE} />
+        <p className={styles.stepNote}>
+          Put <strong>only</strong> columns a dealer may see in <code>select</code>. Never internal notes, costs or payment details.
+        </p>
+      </div>
+    ),
+  },
+  {
+    key: "dealer-step-6",
+    title: "Step 6: Sync, deploy and test",
+    content: (
+      <div className={styles.refBody}>
+        <ul className={styles.ruleList}>
+          <li>Your app repo must have <code>src/core/dealer/dealerLinks.js</code>. If not, get the latest core first (the normal core sync, <code>scripts/sync-repo.ps1</code>).</li>
+          <li>Deploy PSBUniverse-core (step 5) and your app (steps 2 to 4).</li>
+          <li>Use a <strong>test dealer</strong>. Staff create its portal login in Dealer Master Setup with the Login button.</li>
+          <li>Link a record to the test dealer. Sign in at <code>/dealer/login</code> as that dealer and open Projects: the record shows.</li>
+          <li>Change the record, refresh the portal: the change shows. Clear the picker and save: the record is gone.</li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    key: "dealer-rules",
+    title: "Rules and common problems",
+    content: (
+      <div className={styles.refBody}>
+        <p className={styles.ruleHeading}>Rules</p>
+        <ul className={styles.ruleList}>
+          <li>Call the dealer functions only from your server actions, after your own checks. They do no permission checks themselves.</li>
+          <li>Only staff link records. Never let the dealer portal link or unlink.</li>
+          <li>Never copy record details into <code>psb_m_dealerlink</code>.</li>
+          <li>Never hard-code dealer ids or names. Ids differ between the QAS and PROD databases.</li>
+        </ul>
+        <p className={styles.ruleHeading}>Common problems</p>
+        <ul className={styles.ruleList}>
+          <li><strong>Unknown application</strong>: your module_key is not an active row in <code>psb_s_application</code>.</li>
+          <li><strong>That dealer is not active</strong>: turn it back on in Dealer Master Setup, or pick another dealer.</li>
+          <li><strong>Link saves but the dealer does not see it</strong>: step 5 is missing, or PSBUniverse-core is not deployed.</li>
+          <li><strong>Dealer sees nothing from your app</strong>: a column name in <code>select</code> is wrong. Check the server log for <code>loadDealerRecords</code>.</li>
+        </ul>
+      </div>
+    ),
+  },
+];
+
+function DealerLinkingTab() {
+  return (
+    <div className={styles.tabContent}>
+      <Accordion items={DEALER_LINKING_STEPS} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Root
 // ---------------------------------------------------------------------------
 
@@ -4326,6 +4582,7 @@ const TABS = [
   { id: "tablex",      label: "TableX"      },
   { id: "tablez",      label: "TableZ"      },
   { id: "reference",   label: "Reference"   },
+  { id: "dealer-linking", label: "Dealer Linking" },
 ];
 
 export default function SharedUiReferencePage() {
@@ -4360,6 +4617,7 @@ export default function SharedUiReferencePage() {
       {activeTab === "tablex"      && <TableXTab />}
       {activeTab === "tablez"      && <TableZTab />}
       {activeTab === "reference"   && <ReferenceTab  />}
+      {activeTab === "dealer-linking" && <DealerLinkingTab />}
     </div>
   );
 }

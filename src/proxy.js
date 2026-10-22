@@ -30,6 +30,22 @@ export function proxy(req) {
     return NextResponse.next();
   }
 
+  // ── Dealer portal ────────────────────────────────────────────────────
+  // Dealers sign in separately (psb_dealer_session, see core/dealer/dealerAuth).
+  // Their pages never accept or require an internal session; the page itself
+  // verifies the cookie, this only checks that one is present.
+  if (pathname === "/dealer" || pathname.startsWith("/dealer/")) {
+    const hasDealerSession = Boolean(String(req.cookies.get("psb_dealer_session")?.value || "").trim());
+    if (!hasDealerSession && pathname !== "/dealer/login") {
+      url.pathname = "/dealer/login";
+      url.search = "";
+      const dealerRedirect = NextResponse.redirect(url);
+      dealerRedirect.headers.set("Cache-Control", "no-store, must-revalidate");
+      return dealerRedirect;
+    }
+    return NextResponse.next();
+  }
+
   // ── Check for SSO session token ────────────────────────────────────────
   // First check new SSO cookie (psb_session)
   let token = SSO_ENABLED ? String(req.cookies.get("psb_session")?.value || "").trim() : "";

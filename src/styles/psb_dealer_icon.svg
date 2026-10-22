@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="PSBUniverse Dealer Portal">
+  <path fill="#1d597f" stroke="#c4a06b" stroke-width="2.5" stroke-linejoin="round" d="M32 8 53 15.5V31C53 43.5 44 52.5 32 56 20 52.5 11 43.5 11 31V15.5Z"/>
+  <path fill="#c4a06b" d="M32 20.5 46 29.6V33.4L32 24.3 18 33.4V29.6Z"/>
+  <path fill="#ffffff" d="M22 34 32 27.5 42 34V44H22Z"/>
+  <rect x="29" y="37" width="6" height="7" rx="0.8" fill="#2b7b89"/>
+</svg>

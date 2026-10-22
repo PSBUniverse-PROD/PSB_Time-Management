@@ -2,6 +2,12 @@
 
 import zipcodes from "zipcodes-us";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import { getCurrentSession } from "@/core/auth/session.service";
+import {
+  DEALER_ACCOUNT_TABLE,
+  hashDealerPassword,
+  normalizeDealerUsername,
+} from "@/core/dealer/dealerAuth";
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -235,3 +241,94 @@ export async function hardDeleteDealerAction(dealerId) {
   if (error) throw new Error(error.message || "Failed to permanently delete dealer");
   return { dealerId, permanentlyDeleted: true };
 }
+
+function toDealerAccountError(error, fallback) {
+  if (error?.code === "23505") return new Error("That username is already in use.");
+  return new Error(error?.message || fallback);
+}
+
+// Dealer credentials may only be read or set by a signed-in internal user.
+async function requireStaffSession() {
+  const session = await getCurrentSession();
+  if (!session?.userId) throw new Error("Not authenticated.");
+  return session;
+}
+
+export async function loadDealerLoginAction(dealerId) {
+  await requireStaffSession();
+  if (!dealerId) return null;
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from(DEALER_ACCOUNT_TABLE)
+    .select("account_id, dealer_id, username, is_active, failed_attempts, locked_until, last_login_at, created_at, updated_at")
+    .eq("dealer_id", dealerId)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    throw new Error(error.message || "Failed to load dealer login.");
+  }
+
+  return data || null;
+}
+
+export async function saveDealerLoginAction(dealerId, input = {}) {
+  await requireStaffSession();
+  if (!dealerId) throw new Error("Dealer is required.");
+
+  const supabase = getSupabaseAdmin();
+  const username = normalizeDealerUsername(input?.username);
+  const isActive = Boolean(input?.isActive ?? true);
+  const password = typeof input?.password === "string" ? input.password : "";
+
+  const { data: existing, error: loadError } = await supabase
+    .from(DEALER_ACCOUNT_TABLE)
+    .select("account_id, password_hash")
+    .eq("dealer_id", dealerId)
+    .maybeSingle();
+
+  if (loadError && loadError.code !== "PGRST116") {
+    throw new Error(loadError.message || "Failed to load dealer account.");
+  }
+
+  const nextPasswordHash = password ? await hashDealerPassword(password) : existing?.password_hash;
+  if (!nextPasswordHash) {
+    throw new Error("Password is required.");
+  }
+
+  const now = new Date().toISOString();
+  const payload = {
+    dealer_id: dealerId,
+    username,
+    password_hash: nextPasswordHash,
+    is_active: isActive,
+    updated_at: now,
+  };
+  // Staff setting a new password is also how a locked login is released.
+  if (password) {
+    payload.failed_attempts = 0;
+    payload.locked_until = null;
+  }
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from(DEALER_ACCOUNT_TABLE)
+      .update(payload)
+      .eq("account_id", existing.account_id)
+      .select("account_id, dealer_id, username, is_active, last_login_at, created_at, updated_at")
+      .single();
+
+    if (error) throw toDealerAccountError(error, "Failed to update dealer login.");
+    return { ...data, created: false };
+  }
+
+  const { data, error } = await supabase
+    .from(DEALER_ACCOUNT_TABLE)
+    .insert({ ...payload, created_at: now })
+    .select("account_id, dealer_id, username, is_active, last_login_at, created_at, updated_at")
+    .single();
+
+  if (error) throw toDealerAccountError(error, "Failed to create dealer login.");
+  return { ...data, created: true };
+}
+

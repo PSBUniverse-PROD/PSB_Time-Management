@@ -42,7 +42,8 @@ export async function createCompanyAction(payload) {
 
   const insertPayload = {
     comp_name: compName,
-    comp_short_name: normalizeText(payload?.comp_short_name) || null,
+    // The column is short_name; the screen calls the field comp_short_name.
+    short_name: normalizeText(payload?.comp_short_name) || null,
     comp_email: normalizeText(payload?.comp_email) || null,
     comp_phone: normalizeText(payload?.comp_phone) || null,
     is_active: payload?.is_active !== undefined ? payload.is_active : true,
@@ -63,7 +64,7 @@ export async function updateCompanyAction(companyId, updates) {
     if (!name) throw new Error("Company name cannot be empty.");
     patch.comp_name = name;
   }
-  if (hasOwn(updates, "comp_short_name")) patch.comp_short_name = normalizeText(updates.comp_short_name) || null;
+  if (hasOwn(updates, "comp_short_name")) patch.short_name = normalizeText(updates.comp_short_name) || null;
   if (hasOwn(updates, "comp_email")) patch.comp_email = normalizeText(updates.comp_email) || null;
   if (hasOwn(updates, "comp_phone")) patch.comp_phone = normalizeText(updates.comp_phone) || null;
   if (hasOwn(updates, "is_active")) patch.is_active = updates.is_active;
@@ -116,7 +117,8 @@ export async function createDepartmentAction(payload) {
   const insertPayload = {
     comp_id: compId,
     dept_name: deptName,
-    dept_short_name: normalizeText(payload?.dept_short_name) || null,
+    // The column is short_name; the screen calls the field dept_short_name.
+    short_name: normalizeText(payload?.dept_short_name) || null,
     is_active: payload?.is_active !== undefined ? payload.is_active : true,
   };
 
@@ -135,7 +137,7 @@ export async function updateDepartmentAction(departmentId, updates) {
     if (!name) throw new Error("Department name cannot be empty.");
     patch.dept_name = name;
   }
-  if (hasOwn(updates, "dept_short_name")) patch.dept_short_name = normalizeText(updates.dept_short_name) || null;
+  if (hasOwn(updates, "dept_short_name")) patch.short_name = normalizeText(updates.dept_short_name) || null;
   if (hasOwn(updates, "is_active")) patch.is_active = updates.is_active;
   if (Object.keys(patch).length === 0) throw new Error("No valid fields to update.");
 

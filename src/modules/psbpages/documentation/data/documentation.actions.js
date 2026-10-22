@@ -81,6 +81,14 @@ const BOOK_MANIFEST = [
     ],
   },
   {
+    id: "dealer-linking",
+    title: "Dealer Linking",
+    icon: "link",
+    sections: [
+      { id: "dealer-linking", file: "10-dealer-linking/dealer-linking.md", title: "Linking Records to Dealers" },
+    ],
+  },
+  {
     id: "changelog",
     title: "Changelog",
     icon: "clock-rotate-left",
