@@ -245,11 +245,8 @@ export async function updateWorkflowAction(wfId, updates) {
 
 export async function deactivateWorkflowAction(wfId) {
   const supabase = getSupabaseAdmin();
-  // Cascade deactivate stages
-  const { data: stages } = await supabase.from("wfk_s_workflowstages").select("wfs_id").eq("wf_id", wfId);
-  for (const stage of stages || []) {
-    await supabase.from("wfk_s_workflowstages").update({ is_active: false }).eq("wfs_id", stage.wfs_id);
-  }
+  // Cascade deactivate stages (all in one query)
+  await supabase.from("wfk_s_workflowstages").update({ is_active: false }).eq("wf_id", wfId);
   const { error } = await supabase.from("wfk_s_workflow").update({ is_active: false }).eq("wf_id", wfId);
   if (error) throw new Error(error.message || "Failed to deactivate workflow");
   return { wfId, deactivated: true };
@@ -257,11 +254,12 @@ export async function deactivateWorkflowAction(wfId) {
 
 export async function hardDeleteWorkflowAction(wfId) {
   const supabase = getSupabaseAdmin();
-  // Cascade delete stages
+  // Cascade delete stages and their participants (one query each, not per stage)
   const { data: stages } = await supabase.from("wfk_s_workflowstages").select("wfs_id").eq("wf_id", wfId);
-  for (const stage of stages || []) {
-    await supabase.from("wfk_m_stageparticipant").delete().eq("wfs_id", stage.wfs_id);
-    await supabase.from("wfk_s_workflowstages").delete().eq("wfs_id", stage.wfs_id);
+  const stageIds = (stages || []).map((stage) => stage.wfs_id);
+  if (stageIds.length > 0) {
+    await supabase.from("wfk_m_stageparticipant").delete().in("wfs_id", stageIds);
+    await supabase.from("wfk_s_workflowstages").delete().eq("wf_id", wfId);
   }
   const { error } = await supabase.from("wfk_s_workflow").delete().eq("wf_id", wfId);
   if (error) throw new Error(error.message || "Failed to permanently delete workflow");
@@ -345,19 +343,23 @@ export async function saveWorkflowOrderAction(wfIds) {
   const invalidIds = requestedIds.filter((id) => !validIds.has(String(id)));
   if (invalidIds.length > 0) throw new Error("One or more workflows are invalid for order updates.");
 
-  const offset = 100000;
-  for (let i = 0; i < requestedIds.length; i++) {
-    const { error } = await supabase.from("wfk_s_workflow")
-      .update({ display_order: offset + i + 1 }).eq("wf_id", requestedIds[i]);
-    if (error) throw new Error(error.message || "Failed to update workflow order");
-  }
-  for (let i = 0; i < requestedIds.length; i++) {
-    const { error } = await supabase.from("wfk_s_workflow")
-      .update({ display_order: i + 1 }).eq("wf_id", requestedIds[i]);
-    if (error) throw new Error(error.message || "Failed to update workflow order");
-  }
+  // Only workflows whose position actually changes are written (usually none).
+  const currentOrderById = new Map((wfs || []).map((w) => [String(w?.wf_id ?? ""), Number(w?.display_order)]));
+  const changed = requestedIds
+    .map((id, index) => ({ id, finalOrder: index + 1 }))
+    .filter(({ id, finalOrder }) => currentOrderById.get(String(id)) !== finalOrder);
 
-  return { updatedCount: requestedIds.length };
+  // Two phases avoid unique-constraint collisions: distinct temporary values
+  // first, then the final ones. Within a phase the writes run together.
+  const offset = 100000;
+  const writeOrders = (pairs) => Promise.all(pairs.map(async ({ id, value }) => {
+    const { error } = await supabase.from("wfk_s_workflow").update({ display_order: value }).eq("wf_id", id);
+    if (error) throw new Error(error.message || "Failed to update workflow order");
+  }));
+  await writeOrders(changed.map(({ id, finalOrder }) => ({ id, value: offset + finalOrder })));
+  await writeOrders(changed.map(({ id, finalOrder }) => ({ id, value: finalOrder })));
+
+  return { updatedCount: changed.length };
 }
 
 // ─── STAGE TYPE ACTIONS ────────────────────────────────────
@@ -513,11 +515,8 @@ export async function updateOrgRoleAction(id, updates) {
 
 export async function deactivateOrgRoleAction(id) {
   const supabase = getSupabaseAdmin();
-  // Cascade deactivate users in charge for this role
-  const { data: userRoles } = await supabase.from("wfk_m_userorgrole").select("user_orgrole_id").eq("role_id", id);
-  for (const ur of userRoles || []) {
-    await supabase.from("wfk_m_userorgrole").update({ is_active: false }).eq("user_orgrole_id", ur.user_orgrole_id);
-  }
+  // Cascade deactivate users in charge for this role (all in one query)
+  await supabase.from("wfk_m_userorgrole").update({ is_active: false }).eq("role_id", id);
   const { error } = await supabase.from("wfk_s_orgrole").update({ is_active: false }).eq("orgrole_id", id);
   if (error) throw new Error(error.message || "Failed to deactivate org role");
   return { id, deactivated: true };
@@ -617,4 +616,205 @@ export async function hardDeleteUserOrgRoleAction(id) {
   const { error } = await supabase.from("wfk_m_userorgrole").delete().eq("user_orgrole_id", id);
   if (error) throw new Error(error.message || "Failed to permanently delete user org role");
   return { id, permanentlyDeleted: true };
+}
+
+// ─── BATCH SAVES ───────────────────────────────────────────
+//
+// Each saves a whole staged batch in ONE call from the browser (they used to be
+// one call per change). Step order is the same as before; the items within a
+// step run together, except new workflows and new stages, which go one at a
+// time (unique name, order = current highest + 1).
+
+// Same prefixes as the TEMP_*_PREFIX constants in workflow.data.js / reference.data.js.
+const TEMP_ID_PREFIXES = {
+  workflow: "tmp-wf-", stage: "tmp-wfs-", orgRole: "tmp-org-",
+  userOrgRole: "tmp-uor-", participant: "tmp-sp-", ref: "tmp-ref-",
+};
+function isTempId(kind, id) {
+  return String(id ?? "").startsWith(TEMP_ID_PREFIXES[kind]);
+}
+function idSet(...lists) {
+  return new Set(lists.flatMap((list) => list || []).map((id) => String(id ?? "")));
+}
+
+/**
+ * Workflows & stages tab: workflows → stages → order → stage participants →
+ * user org roles. `orderedWfIds` is the screen's workflow order (temp ids
+ * included). Returns { wfIdMap, deactivatedWfIds, orderedPersistedWfIds }.
+ */
+export async function saveWorkflowBatch(pendingBatch, orderedWfIds) {
+  const batch = pendingBatch || {};
+  const wfIdMap = {};
+  const stageIdMap = {};
+  const resolveWfId = (id) => wfIdMap[String(id ?? "")] ?? id;
+  const deactivatedWfSet = idSet(batch.wfDeactivations, batch.wfHardDeletes);
+  const deactivatedStageSet = idSet(batch.stageDeactivations, batch.stageHardDeletes);
+
+  for (const entry of batch.wfCreates || []) {
+    const created = await createWorkflowAction(entry.payload);
+    const id = created?.wf_id;
+    if (id == null || id === "") throw new Error("Created workflow response is invalid.");
+    wfIdMap[String(entry.tempId)] = id;
+  }
+
+  await Promise.all(Object.entries(batch.wfUpdates || {}).map(async ([wfId, updates]) => {
+    if (deactivatedWfSet.has(String(wfId)) || !Object.keys(updates || {}).length) return;
+    await updateWorkflowAction(resolveWfId(wfId), updates);
+  }));
+
+  for (const entry of batch.stageCreates || []) {
+    const resolved = resolveWfId(entry?.payload?.wf_id);
+    if (!resolved || deactivatedWfSet.has(String(resolved))) continue;
+    const created = await createWorkflowStageAction({ ...entry.payload, wf_id: resolved });
+    const stageId = created?.wfs_id;
+    if (stageId != null && stageId !== "") stageIdMap[String(entry.tempId)] = stageId;
+  }
+
+  await Promise.all(Object.entries(batch.stageUpdates || {}).map(async ([stageId, updates]) => {
+    if (deactivatedStageSet.has(String(stageId)) || !Object.keys(updates || {}).length) return;
+    await updateWorkflowStageAction(stageId, updates);
+  }));
+
+  await Promise.all((batch.stageDeactivations || []).filter((id) => !isTempId("stage", id)).map((id) => deactivateWorkflowStageAction(id)));
+  await Promise.all((batch.wfDeactivations || []).filter((id) => !isTempId("workflow", id)).map((id) => deactivateWorkflowAction(id)));
+  await Promise.all((batch.stageHardDeletes || []).filter((id) => !isTempId("stage", id)).map((id) => hardDeleteWorkflowStageAction(id)));
+  await Promise.all((batch.wfHardDeletes || []).filter((id) => !isTempId("workflow", id)).map((id) => hardDeleteWorkflowAction(id)));
+
+  const orderedPersistedWfIds = (Array.isArray(orderedWfIds) ? orderedWfIds : [])
+    .map((id) => resolveWfId(id))
+    .filter((id) => id != null && id !== "")
+    .filter((id) => !deactivatedWfSet.has(String(id)))
+    .filter((id) => !isTempId("workflow", id));
+  if (orderedPersistedWfIds.length > 0) await saveWorkflowOrderAction(orderedPersistedWfIds);
+
+  // Stage participants
+  const deactivatedParticipantSet = idSet(batch.participantDeactivations, batch.participantHardDeletes);
+  await Promise.all((batch.participantCreates || []).map(async (entry) => {
+    const draftWfsId = entry?.payload?.wfs_id;
+    const resolvedWfsId = stageIdMap[String(draftWfsId ?? "")] ?? draftWfsId;
+    if (!resolvedWfsId || deactivatedStageSet.has(String(resolvedWfsId))) return;
+    if (isTempId("stage", resolvedWfsId)) return; // a stage that was not saved
+    await createStageParticipantAction({ ...entry.payload, wfs_id: resolvedWfsId });
+  }));
+  await Promise.all(Object.entries(batch.participantUpdates || {}).map(async ([participantId, updates]) => {
+    if (deactivatedParticipantSet.has(String(participantId)) || !Object.keys(updates || {}).length) return;
+    if (isTempId("participant", participantId)) return;
+    await updateStageParticipantAction(participantId, updates);
+  }));
+  await Promise.all((batch.participantDeactivations || []).filter((id) => !isTempId("participant", id)).map((id) => deactivateStageParticipantAction(id)));
+  await Promise.all((batch.participantHardDeletes || []).filter((id) => !isTempId("participant", id)).map((id) => hardDeleteStageParticipantAction(id)));
+
+  // User org roles
+  const deactivatedUserRoleSet = idSet(batch.userRoleDeactivations, batch.userRoleHardDeletes);
+  await Promise.all((batch.userRoleCreates || []).map((entry) => createUserOrgRoleAction(entry.payload)));
+  await Promise.all(Object.entries(batch.userRoleUpdates || {}).map(async ([userRoleId, updates]) => {
+    if (deactivatedUserRoleSet.has(String(userRoleId)) || !Object.keys(updates || {}).length) return;
+    if (isTempId("userOrgRole", userRoleId)) return;
+    await updateUserOrgRoleAction(userRoleId, updates);
+  }));
+  await Promise.all((batch.userRoleDeactivations || []).filter((id) => !isTempId("userOrgRole", id)).map((id) => deactivateUserOrgRoleAction(id)));
+  await Promise.all((batch.userRoleHardDeletes || []).filter((id) => !isTempId("userOrgRole", id)).map((id) => hardDeleteUserOrgRoleAction(id)));
+
+  return { wfIdMap, deactivatedWfIds: Array.from(deactivatedWfSet), orderedPersistedWfIds };
+}
+
+/**
+ * Org roles tab: org roles → users in charge → deactivations → deletes.
+ * Returns { roleIdMap, userRoleIdMap, deactivatedRoleIds, deactivatedUserRoleIds }.
+ */
+export async function saveOrgRoleBatch(pendingBatch) {
+  const batch = pendingBatch || {};
+  const roleIdMap = {};
+  const userRoleIdMap = {};
+  const resolveRoleId = (id) => roleIdMap[String(id ?? "")] ?? id;
+  const deactivatedRoleSet = idSet(batch.roleDeactivations, batch.roleHardDeletes);
+  const deactivatedUserRoleSet = idSet(batch.userRoleDeactivations, batch.userRoleHardDeletes);
+
+  await Promise.all((batch.roleCreates || []).map(async (entry) => {
+    const created = await createOrgRoleAction(entry.payload);
+    const id = created?.orgrole_id;
+    if (id == null || id === "") throw new Error("Created org role response is invalid.");
+    roleIdMap[String(entry.tempId)] = id;
+  }));
+
+  await Promise.all(Object.entries(batch.roleUpdates || {}).map(async ([roleId, updates]) => {
+    if (deactivatedRoleSet.has(String(roleId)) || !Object.keys(updates || {}).length) return;
+    await updateOrgRoleAction(resolveRoleId(roleId), updates);
+  }));
+
+  await Promise.all((batch.userRoleCreates || []).map(async (entry) => {
+    const resolvedRoleId = resolveRoleId(entry?.payload?.role_id);
+    if (!resolvedRoleId || deactivatedRoleSet.has(String(resolvedRoleId))) return;
+    const created = await createUserOrgRoleAction({ ...entry.payload, role_id: resolvedRoleId });
+    const id = created?.user_orgrole_id;
+    if (id == null || id === "") throw new Error("Created user org role response is invalid.");
+    userRoleIdMap[String(entry.tempId)] = id;
+  }));
+
+  await Promise.all(Object.entries(batch.userRoleUpdates || {}).map(async ([userRoleId, updates]) => {
+    if (deactivatedUserRoleSet.has(String(userRoleId)) || !Object.keys(updates || {}).length) return;
+    const resolved = userRoleIdMap[String(userRoleId)] ?? userRoleId;
+    if (isTempId("userOrgRole", resolved)) return;
+    await updateUserOrgRoleAction(resolved, updates);
+  }));
+
+  await Promise.all((batch.userRoleDeactivations || []).filter((id) => !isTempId("userOrgRole", id)).map((id) => deactivateUserOrgRoleAction(id)));
+  await Promise.all((batch.roleDeactivations || []).filter((id) => !isTempId("orgRole", id)).map((id) => deactivateOrgRoleAction(id)));
+  await Promise.all((batch.userRoleHardDeletes || []).filter((id) => !isTempId("userOrgRole", id)).map((id) => hardDeleteUserOrgRoleAction(id)));
+  await Promise.all((batch.roleHardDeletes || []).filter((id) => !isTempId("orgRole", id)).map((id) => hardDeleteOrgRoleAction(id)));
+
+  return {
+    roleIdMap,
+    userRoleIdMap,
+    deactivatedRoleIds: Array.from(deactivatedRoleSet),
+    deactivatedUserRoleIds: Array.from(deactivatedUserRoleSet),
+  };
+}
+
+// The actions behind each reference / mapping table (same as REF_ACTIONS in reference.data.js).
+const REF_TABLE_ACTIONS = {
+  stagetype: { create: createStageTypeAction, update: updateStageTypeAction, deactivate: deactivateStageTypeAction, hardDelete: hardDeleteStageTypeAction, idField: "stagetype_id" },
+  approvaltype: { create: createApprovalTypeAction, update: updateApprovalTypeAction, deactivate: deactivateApprovalTypeAction, hardDelete: hardDeleteApprovalTypeAction, idField: "approvaltype_id" },
+  status: { create: createStatusAction, update: updateStatusAction, deactivate: deactivateStatusAction, hardDelete: hardDeleteStatusAction, idField: "status_id" },
+  orgrole: { create: createOrgRoleAction, update: updateOrgRoleAction, deactivate: deactivateOrgRoleAction, hardDelete: hardDeleteOrgRoleAction, idField: "orgrole_id" },
+  stageparticipant: { create: createStageParticipantAction, update: updateStageParticipantAction, deactivate: deactivateStageParticipantAction, hardDelete: hardDeleteStageParticipantAction, idField: "stageparticipant_id" },
+  userorgrole: { create: createUserOrgRoleAction, update: updateUserOrgRoleAction, deactivate: deactivateUserOrgRoleAction, hardDelete: hardDeleteUserOrgRoleAction, idField: "user_orgrole_id" },
+};
+
+/**
+ * Reference / mapping tables (stage types, approval types, statuses, org
+ * roles, stage participants, user org roles): creates → edits →
+ * deactivations → deletes. `refKey` is one of the REF_TABLE_ACTIONS keys.
+ */
+export async function saveRefTableBatch(refKey, changes) {
+  const table = REF_TABLE_ACTIONS[refKey];
+  if (!table) throw new Error(`Unknown workflow table "${refKey}".`);
+  const batch = changes || {};
+  const tempIdMap = {};
+  const resolveId = (id) => tempIdMap[String(id ?? "")] ?? id;
+  const deactivatedSet = idSet(batch.deactivations, batch.hardDeletes);
+
+  await Promise.all((batch.creates || []).map(async (entry) => {
+    const created = await table.create(entry.payload);
+    const createdId = created?.[table.idField];
+    if (createdId === undefined || createdId === null || createdId === "") throw new Error("Created record response is invalid.");
+    tempIdMap[String(entry.tempId)] = createdId;
+  }));
+
+  await Promise.all(Object.entries(batch.updates || {}).map(async ([id, updates]) => {
+    const resolved = resolveId(id);
+    if (deactivatedSet.has(String(resolved)) || isTempId("ref", resolved)) return;
+    if (Object.keys(updates || {}).length === 0) return;
+    await table.update(resolved, updates);
+  }));
+
+  await Promise.all((batch.deactivations || []).map(async (id) => {
+    const resolved = resolveId(id);
+    if (!isTempId("ref", resolved)) await table.deactivate(resolved);
+  }));
+
+  await Promise.all((batch.hardDeletes || []).map(async (id) => {
+    const resolved = resolveId(id);
+    if (!isTempId("ref", resolved)) await table.hardDelete(resolved);
+  }));
 }

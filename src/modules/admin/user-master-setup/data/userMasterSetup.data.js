@@ -7,8 +7,7 @@
 
 import {
   loadUserMasterLookups, loadUserMasterUsers, loadUserMasterDetail,
-  createUserAction, updateUserAction, deleteUserAction,
-  createAccessAction, deleteAccessAction,
+  deleteUserAction, saveUserMasterBatch,
 } from "./userMasterSetup.actions.js";
 
 // ─── CONSTANTS ─────────────────────────────────────────────
@@ -238,42 +237,11 @@ export async function fetchUserDetail(userId) {
   return loadUserMasterDetail(userId);
 }
 
+// The whole batch is saved in one server call (saveUserMasterBatch); it used
+// to be one call per user and per access row. Returns tempId → new user id.
 export async function executeBatchSave(pendingBatch) {
-  const createdIdMap = new Map();
-
-  for (const entry of pendingBatch.creates || []) {
-    const user = await createUserAction(entry?.payload || {});
-    const createdId = rowIdOf(user);
-    if (!createdId) throw new Error("Created user did not return a valid id.");
-    createdIdMap.set(String(entry?.tempId), String(createdId));
-    for (const access of entry?.accessRows || []) {
-      await createAccessAction(createdId, { app_id: access?.app_id, role_id: access?.role_id });
-    }
-  }
-
-  for (const [rawId, payload] of Object.entries(pendingBatch.updates || {})) {
-    const resolvedId = createdIdMap.get(String(rawId)) || rawId;
-    if (!resolvedId || isTemporaryId(resolvedId)) continue;
-    await updateUserAction(resolvedId, payload || {});
-  }
-
-  for (const [rawId, rows] of Object.entries(pendingBatch.accessDeletes || {})) {
-    const resolvedId = createdIdMap.get(String(rawId)) || rawId;
-    if (!resolvedId || isTemporaryId(resolvedId)) continue;
-    for (const row of rows || []) {
-      await deleteAccessAction(resolvedId, { app_id: row?.app_id, role_id: row?.role_id });
-    }
-  }
-
-  for (const [rawId, rows] of Object.entries(pendingBatch.accessUpserts || {})) {
-    const resolvedId = createdIdMap.get(String(rawId)) || rawId;
-    if (!resolvedId || isTemporaryId(resolvedId)) continue;
-    for (const row of rows || []) {
-      await createAccessAction(resolvedId, { app_id: row?.app_id, role_id: row?.role_id });
-    }
-  }
-
-  return createdIdMap;
+  const createdIds = await saveUserMasterBatch(pendingBatch);
+  return new Map(Object.entries(createdIds || {}));
 }
 
 export async function executeDeactivateUser(userId) {

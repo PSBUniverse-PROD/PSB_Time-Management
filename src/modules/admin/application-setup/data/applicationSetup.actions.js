@@ -171,11 +171,8 @@ export async function updateApplicationAction(appId, updates) {
 export async function deactivateApplicationAction(appId) {
   const supabase = getSupabaseAdmin();
   if (await isProtectedApp(supabase, appId)) return { appId, deactivated: false };
-  // Cascade deactivate roles
-  const { data: roles } = await supabase.from("psb_s_role").select("role_id").eq("app_id", appId);
-  for (const role of roles || []) {
-    await supabase.from("psb_s_role").update({ is_active: false }).eq("role_id", role.role_id);
-  }
+  // Cascade deactivate roles (all of the app's roles in one query)
+  await supabase.from("psb_s_role").update({ is_active: false }).eq("app_id", appId);
   const { error } = await supabase.from("psb_s_application").update({ is_active: false }).eq("app_id", appId);
   if (error) throw new Error(error.message || "Failed to deactivate application");
   return { appId, deactivated: true };
@@ -184,11 +181,8 @@ export async function deactivateApplicationAction(appId) {
 export async function hardDeleteApplicationAction(appId) {
   const supabase = getSupabaseAdmin();
   if (await isProtectedApp(supabase, appId)) return { appId, permanentlyDeleted: false };
-  // Cascade delete roles
-  const { data: roles } = await supabase.from("psb_s_role").select("role_id").eq("app_id", appId);
-  for (const role of roles || []) {
-    await supabase.from("psb_s_role").delete().eq("role_id", role.role_id);
-  }
+  // Cascade delete roles (all of the app's roles in one query)
+  await supabase.from("psb_s_role").delete().eq("app_id", appId);
   const { error } = await supabase.from("psb_s_application").delete().eq("app_id", appId);
   if (error) throw new Error(error.message || "Failed to permanently delete application");
   return { appId, permanentlyDeleted: true };
@@ -265,22 +259,24 @@ export async function saveApplicationOrderAction(appIds) {
   const invalidIds = requestedIds.filter((id) => !validIds.has(String(id)));
   if (invalidIds.length > 0) throw new Error("One or more applications are invalid for order updates.");
 
-  // Shift to temporary offset values to avoid unique constraint collisions
+  // Only apps whose position actually changes are written (usually none).
+  const currentOrderById = new Map((apps || []).map((a) => [String(a?.app_id ?? ""), Number(a?.[orderField])]));
+  const changed = requestedIds
+    .map((id, index) => ({ id, finalOrder: index + 1 }))
+    .filter(({ id, finalOrder }) => currentOrderById.get(String(id)) !== finalOrder);
+
+  // Two phases to avoid unique-constraint collisions: first move the changed
+  // apps to distinct temporary values, then to their final values. Within a
+  // phase every value is distinct, so the writes run together.
   const offset = 100000;
-  for (let i = 0; i < requestedIds.length; i++) {
-    const { error } = await supabase.from("psb_s_application")
-      .update({ [orderField]: offset + i + 1 }).eq("app_id", requestedIds[i]);
+  const writeOrders = (pairs) => Promise.all(pairs.map(async ({ id, value }) => {
+    const { error } = await supabase.from("psb_s_application").update({ [orderField]: value }).eq("app_id", id);
     if (error) throw new Error(error.message || "Failed to update application order");
-  }
+  }));
+  await writeOrders(changed.map(({ id, finalOrder }) => ({ id, value: offset + finalOrder })));
+  await writeOrders(changed.map(({ id, finalOrder }) => ({ id, value: finalOrder })));
 
-  // Now assign final order values
-  for (let i = 0; i < requestedIds.length; i++) {
-    const { error } = await supabase.from("psb_s_application")
-      .update({ [orderField]: i + 1 }).eq("app_id", requestedIds[i]);
-    if (error) throw new Error(error.message || "Failed to update application order");
-  }
-
-  return { orderField, updatedCount: requestedIds.length };
+  return { orderField, updatedCount: changed.length };
 }
 
 // ─── ROLE USER ACTIONS ─────────────────────────────────────
@@ -359,4 +355,73 @@ export async function saveRoleUsersAction(roleId, changes) {
   }
 
   return { added: addUserIds.length, removed: removeUserIds.length };
+}
+
+// ─── BATCH SAVE ────────────────────────────────────────────
+
+// Same prefixes as TEMP_APP_PREFIX / TEMP_ROLE_PREFIX in applicationSetup.data.js.
+const TEMP_APP_ID_PREFIX = "tmp-app-";
+const TEMP_ROLE_ID_PREFIX = "tmp-role-";
+
+/**
+ * Saves a whole staged batch in ONE call from the browser (it used to be one
+ * call per change). Same order as before: new apps → app edits → new roles →
+ * role edits → role, then app deactivations → role, then app permanent
+ * deletes → app order. New apps and app edits run one at a time (module keys
+ * must stay unique); the items of every other step run together.
+ * `orderedAppIds` is the screen's app order (temporary ids included).
+ */
+export async function saveApplicationSetupBatch(pendingBatch, orderedAppIds) {
+  const supabase = getSupabaseAdmin();
+  const batch = pendingBatch || {};
+  const appIdMap = {};
+  const isTempApp = (id) => String(id ?? "").startsWith(TEMP_APP_ID_PREFIX);
+  const isTempRole = (id) => String(id ?? "").startsWith(TEMP_ROLE_ID_PREFIX);
+  const resolveAppId = (id) => appIdMap[String(id ?? "")] ?? id;
+  const deactivatedAppSet = new Set(
+    [...(batch.appDeactivations || []), ...(batch.appHardDeletes || [])].map((id) => String(id ?? "")),
+  );
+  const deactivatedRoleSet = new Set(
+    [...(batch.roleDeactivations || []), ...(batch.roleHardDeletes || [])].map((id) => String(id ?? "")),
+  );
+
+  for (const entry of batch.appCreates || []) {
+    const created = await createApplicationAction(entry.payload);
+    const id = created?.app_id;
+    if (id == null || id === "") throw new Error("Created application response is invalid.");
+    appIdMap[String(entry.tempId)] = id;
+  }
+
+  for (const [appId, updates] of Object.entries(batch.appUpdates || {})) {
+    if (deactivatedAppSet.has(String(appId)) || !Object.keys(updates || {}).length) continue;
+    await updateApplicationAction(resolveAppId(appId), updates);
+  }
+
+  await Promise.all((batch.roleCreates || []).map(async (entry) => {
+    const resolved = resolveAppId(entry?.payload?.app_id);
+    if (!resolved || deactivatedAppSet.has(String(resolved))) return;
+    await createRoleAction({ ...entry.payload, app_id: resolved });
+  }));
+
+  await Promise.all(Object.entries(batch.roleUpdates || {}).map(async ([roleId, updates]) => {
+    if (deactivatedRoleSet.has(String(roleId)) || !Object.keys(updates || {}).length) return;
+    await updateRoleAction(roleId, updates);
+  }));
+
+  await Promise.all((batch.roleDeactivations || []).filter((id) => !isTempRole(id)).map((id) => deactivateRoleAction(id)));
+  await Promise.all((batch.appDeactivations || []).filter((id) => !isTempApp(id)).map((id) => deactivateApplicationAction(id)));
+  await Promise.all((batch.roleHardDeletes || []).filter((id) => !isTempRole(id)).map((id) => hardDeleteRoleAction(id)));
+  await Promise.all((batch.appHardDeletes || []).filter((id) => !isTempApp(id)).map((id) => hardDeleteApplicationAction(id)));
+
+  const orderedPersistedAppIds = (Array.isArray(orderedAppIds) ? orderedAppIds : [])
+    .map((id) => resolveAppId(id))
+    .filter((id) => id != null && id !== "")
+    .filter((id) => !deactivatedAppSet.has(String(id)))
+    .filter((id) => !isTempApp(id));
+
+  if (orderedPersistedAppIds.length > 0) {
+    await saveApplicationOrderAction(orderedPersistedAppIds);
+  }
+
+  return { appIdMap, deactivatedAppIds: Array.from(deactivatedAppSet), orderedPersistedAppIds };
 }

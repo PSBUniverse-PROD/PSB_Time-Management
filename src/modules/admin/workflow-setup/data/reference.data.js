@@ -6,14 +6,7 @@
  * (Stage Participants, User Org Roles).
  */
 
-import {
-  createStageTypeAction, updateStageTypeAction, deactivateStageTypeAction, hardDeleteStageTypeAction,
-  createApprovalTypeAction, updateApprovalTypeAction, deactivateApprovalTypeAction, hardDeleteApprovalTypeAction,
-  createStatusAction, updateStatusAction, deactivateStatusAction, hardDeleteStatusAction,
-  createOrgRoleAction, updateOrgRoleAction, deactivateOrgRoleAction, hardDeleteOrgRoleAction,
-  createStageParticipantAction, updateStageParticipantAction, deactivateStageParticipantAction, hardDeleteStageParticipantAction,
-  createUserOrgRoleAction, updateUserOrgRoleAction, deactivateUserOrgRoleAction, hardDeleteUserOrgRoleAction,
-} from "./workflow.actions.js";
+import { saveRefTableBatch } from "./workflow.actions.js";
 
 // ─── ID / TEXT HELPERS ─────────────────────────────────────
 
@@ -102,89 +95,18 @@ export function batchMarker(batchState) {
 // ─── BATCH SAVE ORCHESTRATION ──────────────────────────────
 
 export async function executeRefBatchSave(changes, actions) {
-  const {
-    createAction, updateAction, deactivateAction, hardDeleteAction,
-    idField = "id",
-  } = actions || {};
-
-  const tempIdMap = new Map();
-  const deactivatedSet = new Set(
-    [...(changes.deactivations || []), ...(changes.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  for (const entry of changes.creates || []) {
-    const created = await createAction(entry.payload);
-    const createdId = created?.[idField];
-    if (createdId === undefined || createdId === null || createdId === "") {
-      throw new Error("Created record response is invalid.");
-    }
-    tempIdMap.set(String(entry.tempId), createdId);
-  }
-
-  for (const [id, updates] of Object.entries(changes.updates || {})) {
-    const resolvedId = tempIdMap.get(String(id)) ?? id;
-    if (deactivatedSet.has(String(resolvedId))) continue;
-    if (isTempRefId(resolvedId)) continue;
-    if (Object.keys(updates || {}).length === 0) continue;
-    await updateAction(resolvedId, updates);
-  }
-
-  for (const id of changes.deactivations || []) {
-    const resolvedId = tempIdMap.get(String(id)) ?? id;
-    if (isTempRefId(resolvedId)) continue;
-    await deactivateAction(resolvedId);
-  }
-
-  for (const id of changes.hardDeletes || []) {
-    const resolvedId = tempIdMap.get(String(id)) ?? id;
-    if (isTempRefId(resolvedId)) continue;
-    await hardDeleteAction(resolvedId);
-  }
+  await saveRefTableBatch(actions?.refKey, changes);
 }
 
 // ─── ACTION RESOLVERS ──────────────────────────────────────
 
+// Which server-side table each screen saves to (see saveRefTableBatch in
+// workflow.actions.js, which holds the create/update/delete actions).
 export const REF_ACTIONS = {
-  stagetype: {
-    createAction: createStageTypeAction,
-    updateAction: updateStageTypeAction,
-    deactivateAction: deactivateStageTypeAction,
-    hardDeleteAction: hardDeleteStageTypeAction,
-    idField: "stagetype_id",
-  },
-  approvaltype: {
-    createAction: createApprovalTypeAction,
-    updateAction: updateApprovalTypeAction,
-    deactivateAction: deactivateApprovalTypeAction,
-    hardDeleteAction: hardDeleteApprovalTypeAction,
-    idField: "approvaltype_id",
-  },
-  status: {
-    createAction: createStatusAction,
-    updateAction: updateStatusAction,
-    deactivateAction: deactivateStatusAction,
-    hardDeleteAction: hardDeleteStatusAction,
-    idField: "status_id",
-  },
-  orgrole: {
-    createAction: createOrgRoleAction,
-    updateAction: updateOrgRoleAction,
-    deactivateAction: deactivateOrgRoleAction,
-    hardDeleteAction: hardDeleteOrgRoleAction,
-    idField: "orgrole_id",
-  },
-  stageparticipant: {
-    createAction: createStageParticipantAction,
-    updateAction: updateStageParticipantAction,
-    deactivateAction: deactivateStageParticipantAction,
-    hardDeleteAction: hardDeleteStageParticipantAction,
-    idField: "stageparticipant_id",
-  },
-  userorgrole: {
-    createAction: createUserOrgRoleAction,
-    updateAction: updateUserOrgRoleAction,
-    deactivateAction: deactivateUserOrgRoleAction,
-    hardDeleteAction: hardDeleteUserOrgRoleAction,
-    idField: "user_orgrole_id",
-  },
+  stagetype: { refKey: "stagetype", idField: "stagetype_id" },
+  approvaltype: { refKey: "approvaltype", idField: "approvaltype_id" },
+  status: { refKey: "status", idField: "status_id" },
+  orgrole: { refKey: "orgrole", idField: "orgrole_id" },
+  stageparticipant: { refKey: "stageparticipant", idField: "stageparticipant_id" },
+  userorgrole: { refKey: "userorgrole", idField: "user_orgrole_id" },
 };

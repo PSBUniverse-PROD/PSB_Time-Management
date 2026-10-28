@@ -235,9 +235,10 @@ function useUserPanel({
   };
 }
 
-function useUserMasterSetup({ users = [], totalUsers = 0 }) {
+function useUserMasterSetup({ users = [], totalUsers = 0, initialLookups = null }) {
   const [tableRows, setTableRows] = useState(Array.isArray(users) ? users : []);
-  const [lookups, setLookups] = useState(EMPTY_LOOKUPS);
+  // The page sends the lookup lists along; they're only fetched here when it didn't.
+  const [lookups, setLookups] = useState(initialLookups || EMPTY_LOOKUPS);
   const [pendingBatch, setPendingBatch] = useState(createEmptyPendingBatch);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingLookups, setIsLoadingLookups] = useState(false);
@@ -289,7 +290,7 @@ function useUserMasterSetup({ users = [], totalUsers = 0 }) {
     finally { setIsLoadingLookups(false); }
   }, []);
 
-  useEffect(() => { loadLookups(); }, [loadLookups]);
+  useEffect(() => { if (!initialLookups) loadLookups(); }, [loadLookups, initialLookups]);
 
   const saveBatch = useCallback(async () => {
     if (!hasPendingChanges) { toastInfo("There are no staged changes.", "User Master Setup"); return; }
@@ -652,8 +653,8 @@ function UserModalsSection({
 //  MAIN VIEW
 // ═══════════════════════════════════════════════════════════
 
-export default function UserMasterSetupView({ users, totalUsers }) {
-  const h = useUserMasterSetup({ users, totalUsers });
+export default function UserMasterSetupView({ users, totalUsers, lookups }) {
+  const h = useUserMasterSetup({ users, totalUsers, initialLookups: lookups });
 
   return (
     <main className="container-fluid py-3 umsp-shell">

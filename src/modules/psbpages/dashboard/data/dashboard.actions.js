@@ -187,68 +187,73 @@ export async function loadAssignedCardsFromDatabase() {
     const dbUser = await resolveDbUser(supabaseAdmin, authData.user);
     if (!dbUser?.user_id) return [];
 
-    const accessScope = await resolveUserAccessScope(supabaseAdmin, dbUser.user_id);
+    // The user's access scope and every active application's site address
+    // don't depend on each other, so they load together. Site addresses by
+    // module_key let a card point at another app with
+    // "module:<module_key>/<path>" even when the user has no role in that app.
+    const [accessScope, { data: moduleAppRows }] = await Promise.all([
+      resolveUserAccessScope(supabaseAdmin, dbUser.user_id),
+      supabaseAdmin
+        .from("psb_s_application")
+        .select("module_key, dev_url, prod_url")
+        .eq("is_active", true),
+    ]);
     if (!Array.isArray(accessScope.appIds) || accessScope.appIds.length === 0) return [];
 
-    // Site address of every active application by module_key, so a card can
-    // point at another app with "module:<module_key>/<path>" even when the
-    // user has no role in that application.
-    const { data: moduleAppRows } = await supabaseAdmin
-      .from("psb_s_application")
-      .select("module_key, dev_url, prod_url")
-      .eq("is_active", true);
     const baseUrlByModuleKey = new Map(
       (Array.isArray(moduleAppRows) ? moduleAppRows : [])
         .filter((row) => hasValue(row?.module_key))
         .map((row) => [String(row.module_key).trim().toLowerCase(), resolveAppBaseUrl(row, APP_ENV)]),
     );
 
-    const visibleCards = [];
+    // Card groups, cards and card-role mappings for ALL the user's apps in one
+    // query each (3 round trips in total, however many apps the user has).
+    const { data: groupRows, error: groupError } = await supabaseAdmin
+      .from(APP_CARD_GROUP_TABLE)
+      .select("*")
+      .in("app_id", accessScope.appIds)
+      .eq("is_active", true)
+      .order("display_order", { ascending: true });
 
-    for (const appId of accessScope.appIds) {
-      const roleSet = accessScope.roleIdsByApp.get(appId);
-      if (!(roleSet instanceof Set) || roleSet.size === 0) continue;
+    if (groupError || !Array.isArray(groupRows) || groupRows.length === 0) return [];
 
-      const { data: groupRows, error: groupError } = await supabaseAdmin
-        .from(APP_CARD_GROUP_TABLE)
-        .select("*")
-        .eq("app_id", appId)
-        .eq("is_active", true)
-        .order("display_order", { ascending: true });
-
-      if (groupError || !Array.isArray(groupRows) || groupRows.length === 0) continue;
-
-      const groups = groupRows
+    // Only groups of apps where the user holds at least one active role.
+    const groupById = new Map(
+      groupRows
         .filter((row) => row && isActiveRow(row))
         .map((row) => ({
           groupId: String(row?.group_id || row?.app_group_id || row?.card_group_id || "").trim(),
+          appId: String(row?.app_id || "").trim(),
           groupName: readText(row, ["group_name", "name", "label"], "Application"),
           groupDescription: readText(row, ["group_desc", "description"], ""),
           groupIcon: readText(row, ["icon"], "layer-group"),
           groupOrder: asNumber(row?.display_order ?? row?.group_order ?? row?.sort_order ?? row?.order_no, 0),
         }))
-        .filter((group) => hasValue(group.groupId));
+        .filter((group) => hasValue(group.groupId) && (accessScope.roleIdsByApp.get(group.appId)?.size || 0) > 0)
+        .map((group) => [group.groupId, group]),
+    );
 
-      if (groups.length === 0) continue;
+    if (groupById.size === 0) return [];
 
-      const groupIds = groups.map((group) => group.groupId);
-      const groupById = new Map(groups.map((group) => [group.groupId, group]));
+    const { data: cardRows, error: cardError } = await supabaseAdmin
+      .from(APP_CARD_TABLE)
+      .select("*")
+      .eq("is_active", true)
+      .in("group_id", Array.from(groupById.keys()))
+      .order("display_order", { ascending: true });
 
-      const { data: cardRows, error: cardError } = await supabaseAdmin
-        .from(APP_CARD_TABLE)
-        .select("*")
-        .eq("is_active", true)
-        .in("group_id", groupIds)
-        .order("display_order", { ascending: true });
+    if (cardError || !Array.isArray(cardRows) || cardRows.length === 0) return [];
 
-      if (cardError || !Array.isArray(cardRows) || cardRows.length === 0) continue;
-
-      const cards = cardRows
-        .filter((row) => row && isActiveRow(row))
-        .map((row) => ({
+    // A card belongs to its group's app: that app's base URL and roles apply.
+    const cards = cardRows
+      .filter((row) => row && isActiveRow(row))
+      .map((row) => {
+        const groupId = String(row?.group_id || row?.app_group_id || row?.card_group_id || "").trim();
+        const appId = groupById.get(groupId)?.appId || "";
+        return {
           cardId: String(row?.card_id || row?.app_card_id || "").trim(),
-          groupId: String(row?.group_id || row?.app_group_id || row?.card_group_id || "").trim(),
-          appId: String(row?.app_id || row?.application_id || appId).trim(),
+          groupId,
+          appId,
           cardName: readText(row, ["card_name", "name", "label"], "Module"),
           cardDescription: readText(row, ["card_desc", "description"], "Open module."),
           routePath: resolveCardRoutePath(
@@ -258,52 +263,57 @@ export async function loadAssignedCardsFromDatabase() {
           ),
           icon: readText(row, ["icon"], "table-cells-large"),
           cardOrder: asNumber(row?.display_order ?? row?.card_order ?? row?.sort_order ?? row?.order_no, 0),
+        };
+      })
+      .filter((card) => hasValue(card.cardId) && groupById.has(card.groupId));
+
+    if (cards.length === 0) return [];
+
+    const { data: cardRoleRows, error: cardRoleError } = await supabaseAdmin
+      .from(APP_CARD_ROLE_ACCESS_TABLE)
+      .select("*")
+      .eq("is_active", true)
+      .in("card_id", cards.map((card) => card.cardId));
+
+    if (cardRoleError || !Array.isArray(cardRoleRows)) return [];
+
+    // A card shows when one of the user's roles IN THAT CARD'S APP is mapped to it.
+    const appIdByCardId = new Map(cards.map((card) => [card.cardId, card.appId]));
+    const visibleCardIds = new Set(
+      cardRoleRows
+        .filter((row) => row && isActiveRow(row))
+        .map((row) => ({
+          cardId: String(row?.card_id || row?.app_card_id || "").trim(),
+          roleId: String(row?.role_id || "").trim(),
         }))
-        .filter((card) => hasValue(card.cardId) && groupById.has(card.groupId));
+        .filter((mapping) => {
+          if (!mapping.cardId || !mapping.roleId) return false;
+          const roleSet = accessScope.roleIdsByApp.get(appIdByCardId.get(mapping.cardId));
+          return roleSet instanceof Set && roleSet.has(mapping.roleId);
+        })
+        .map((mapping) => mapping.cardId),
+    );
 
-      if (cards.length === 0) continue;
+    const visibleCards = [];
+    cards.forEach((card) => {
+      if (!visibleCardIds.has(card.cardId)) return;
+      const group = groupById.get(card.groupId);
+      const appOrder = accessScope.appOrderById.get(card.appId) ?? Number.MAX_SAFE_INTEGER;
+      const totalOrder = appOrder * 1000000 + group.groupOrder * 1000 + card.cardOrder;
 
-      const cardIds = cards.map((card) => card.cardId);
-
-      const { data: cardRoleRows, error: cardRoleError } = await supabaseAdmin
-        .from(APP_CARD_ROLE_ACCESS_TABLE)
-        .select("*")
-        .eq("is_active", true)
-        .in("card_id", cardIds);
-
-      if (cardRoleError || !Array.isArray(cardRoleRows)) continue;
-
-      const visibleCardIds = new Set(
-        cardRoleRows
-          .filter((row) => row && isActiveRow(row))
-          .map((row) => ({
-            cardId: String(row?.card_id || row?.app_card_id || "").trim(),
-            roleId: String(row?.role_id || "").trim(),
-          }))
-          .filter((mapping) => mapping.cardId && mapping.roleId && roleSet.has(mapping.roleId))
-          .map((mapping) => mapping.cardId),
-      );
-
-      cards.forEach((card) => {
-        if (!visibleCardIds.has(card.cardId)) return;
-        const group = groupById.get(card.groupId);
-        const appOrder = accessScope.appOrderById.get(appId) ?? Number.MAX_SAFE_INTEGER;
-        const totalOrder = appOrder * 1000000 + group.groupOrder * 1000 + card.cardOrder;
-
-        visibleCards.push({
-          key: `card-${card.cardId}`,
-          name: card.cardName,
-          description: card.cardDescription || "Open module.",
-          path: card.routePath,
-          appId,
-          icon: card.icon || "table-cells-large",
-          groupName: group?.groupName || "Applications",
-          groupDescription: group?.groupDescription || "",
-          groupIcon: group?.groupIcon || "layer-group",
-          order: totalOrder,
-        });
+      visibleCards.push({
+        key: `card-${card.cardId}`,
+        name: card.cardName,
+        description: card.cardDescription || "Open module.",
+        path: card.routePath,
+        appId: card.appId,
+        icon: card.icon || "table-cells-large",
+        groupName: group?.groupName || "Applications",
+        groupDescription: group?.groupDescription || "",
+        groupIcon: group?.groupIcon || "layer-group",
+        order: totalOrder,
       });
-    }
+    });
 
     return visibleCards.sort((left, right) => left.order - right.order);
   } catch {

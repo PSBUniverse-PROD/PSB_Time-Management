@@ -146,8 +146,11 @@ export async function bootstrapAuthState() {
 
     const authUser = authData.user;
     const rawDbUser = await resolveDbUser(supabaseAdmin, authUser);
-    const dbUser = await enrichDbUser(supabaseAdmin, rawDbUser);
-    const roles = dbUser?.user_id ? await loadResolvedRoles(supabaseAdmin, dbUser.user_id) : [];
+    // Company/department/status and roles only need the user row: load them together.
+    const [dbUser, roles] = await Promise.all([
+      enrichDbUser(supabaseAdmin, rawDbUser),
+      rawDbUser?.user_id ? loadResolvedRoles(supabaseAdmin, rawDbUser.user_id) : Promise.resolve([]),
+    ]);
 
     return {
       authUser: {

@@ -4,10 +4,10 @@ import { loadUserMasterSetupData } from "../data/userMasterSetup.actions.js";
 export const dynamic = "force-dynamic";
 
 export default async function UserMasterSetupPage() {
-  let users, totalUsers, error;
+  let users, totalUsers, lookups, error;
 
   try {
-    ({ users, totalUsers } = await loadUserMasterSetupData());
+    ({ users, totalUsers, lookups } = await loadUserMasterSetupData());
   } catch (e) {
     error = e;
   }
@@ -23,5 +23,5 @@ export default async function UserMasterSetupPage() {
     );
   }
 
-  return <UserMasterSetupView users={users} totalUsers={totalUsers} />;
+  return <UserMasterSetupView users={users} totalUsers={totalUsers} lookups={lookups} />;
 }

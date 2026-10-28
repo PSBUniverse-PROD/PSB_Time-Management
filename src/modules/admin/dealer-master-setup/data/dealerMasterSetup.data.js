@@ -8,12 +8,7 @@
  * - Batch save orchestration (via Server Actions)
  */
 
-import {
-  createDealerAction,
-  updateDealerAction,
-  deactivateDealerAction,
-  hardDeleteDealerAction,
-} from "./dealerMasterSetup.actions.js";
+import { saveDealerBatch } from "./dealerMasterSetup.actions.js";
 
 // ─── FORM DEFINITION ───────────────────────────────────────
 
@@ -193,54 +188,8 @@ export function createEmptyDealerChanges() {
 
 // ─── BATCH SAVE (calls Server Actions) ─────────────────────
 
-/**
- * Writes every staged change to the database in a fixed order:
- * creates → updates → deactivations → hard deletes.
- *
- * Why that order matters:
- * - Creations run first so edits staged against a not-yet-saved dealer
- *   can be redirected to its real id through `tempIdMap`.
- * - A dealer being deactivated or deleted is skipped for updates so we
- *   never fight over the same row.
- * - Temp (unsaved) dealers can only be created or discarded, so they are
- *   skipped in every later phase.
- *
- * Runs sequentially because each step depends on the id returned by the
- * previous one. Any failure throws and is surfaced as a toast by the
- * caller; already-written rows are not rolled back.
- */
+// The whole batch is saved in one server call (saveDealerBatch); it used to be
+// one call per change.
 export async function executeBatchSave(dealerChanges) {
-  const deactivatedSet = new Set(
-    [...(dealerChanges.deactivations || []), ...(dealerChanges.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-  const tempIdMap = new Map();
-
-  for (const createEntry of dealerChanges.creates || []) {
-    const created = await createDealerAction(createEntry.payload);
-    const createdId = created?.dealer_id;
-    if (createdId === undefined || createdId === null || createdId === "") {
-      throw new Error("Created dealer response is invalid.");
-    }
-    tempIdMap.set(String(createEntry.tempId), createdId);
-  }
-
-  for (const [dealerId, updates] of Object.entries(dealerChanges.updates || {})) {
-    const resolvedDealerId = tempIdMap.get(String(dealerId)) ?? dealerId;
-    if (deactivatedSet.has(String(resolvedDealerId))) continue;
-    if (isTempDealerId(resolvedDealerId)) continue;
-    if (Object.keys(updates || {}).length === 0) continue;
-    await updateDealerAction(resolvedDealerId, updates);
-  }
-
-  for (const dealerId of dealerChanges.deactivations || []) {
-    const resolvedDealerId = tempIdMap.get(String(dealerId)) ?? dealerId;
-    if (isTempDealerId(resolvedDealerId)) continue;
-    await deactivateDealerAction(resolvedDealerId);
-  }
-
-  for (const dealerId of dealerChanges.hardDeletes || []) {
-    const resolvedDealerId = tempIdMap.get(String(dealerId)) ?? dealerId;
-    if (isTempDealerId(resolvedDealerId)) continue;
-    await hardDeleteDealerAction(resolvedDealerId);
-  }
+  await saveDealerBatch(dealerChanges);
 }

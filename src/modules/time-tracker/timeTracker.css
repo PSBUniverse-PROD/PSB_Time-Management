@@ -2582,9 +2582,57 @@
 
 .tt-schedule-header-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr 90px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0.85rem;
   margin-bottom: 1rem;
+}
+
+/* Quick setup: day buttons + one row of times, applied to the picked days. */
+.tt-schedule-quick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--tt-spruce-100);
+  border-radius: 8px;
+  background: var(--tt-spruce-50);
+}
+
+.tt-schedule-quick-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tt-schedule-quick-day {
+  border: 1px solid var(--tt-spruce-200);
+  background: #fff;
+  color: var(--tt-spruce-800);
+  border-radius: 999px;
+  padding: 0.2rem 0.8rem;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tt-schedule-quick-day.is-on {
+  background: var(--tt-spruce-600);
+  border-color: var(--tt-spruce-600);
+  color: #fff;
+}
+
+.tt-schedule-quick-times {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr)) auto;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+@media (max-width: 767px) {
+  .tt-schedule-quick-times {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .tt-schedule-grid-head {

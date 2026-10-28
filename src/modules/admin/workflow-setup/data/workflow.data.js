@@ -5,29 +5,7 @@
  * for the workflow configuration pages.
  */
 
-import {
-  createWorkflowAction,
-  updateWorkflowAction,
-  deactivateWorkflowAction,
-  hardDeleteWorkflowAction,
-  createWorkflowStageAction,
-  updateWorkflowStageAction,
-  deactivateWorkflowStageAction,
-  hardDeleteWorkflowStageAction,
-  saveWorkflowOrderAction,
-  createOrgRoleAction,
-  updateOrgRoleAction,
-  deactivateOrgRoleAction,
-  hardDeleteOrgRoleAction,
-  createUserOrgRoleAction,
-  updateUserOrgRoleAction,
-  deactivateUserOrgRoleAction,
-  hardDeleteUserOrgRoleAction,
-  createStageParticipantAction,
-  updateStageParticipantAction,
-  deactivateStageParticipantAction,
-  hardDeleteStageParticipantAction,
-} from "./workflow.actions.js";
+import { saveWorkflowBatch, saveOrgRoleBatch } from "./workflow.actions.js";
 
 // ─── ID / TEXT HELPERS ─────────────────────────────────────
 
@@ -197,134 +175,18 @@ export function batchMarker(batchState) {
 
 // ─── BATCH SAVE ORCHESTRATION ──────────────────────────────
 
+// The whole batch is saved in one server call (saveWorkflowBatch); it used to
+// be one call per change. Returns the same shape as before.
 export async function executeWorkflowBatchSave(pendingBatch, orderedWorkflows) {
-  const wfIdMap = new Map();
-  const deactivatedWfSet = new Set(
-    [...(pendingBatch.wfDeactivations || []), ...(pendingBatch.wfHardDeletes || [])].map((id) => String(id ?? "")),
+  const result = await saveWorkflowBatch(
+    pendingBatch,
+    (Array.isArray(orderedWorkflows) ? orderedWorkflows : []).map((wf) => wf?.wf_id),
   );
-  const deactivatedStageSet = new Set(
-    [...(pendingBatch.stageDeactivations || []), ...(pendingBatch.stageHardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  for (const entry of pendingBatch.wfCreates || []) {
-    const created = await createWorkflowAction(entry.payload);
-    const id = created?.wf_id;
-    if (id == null || id === "") throw new Error("Created workflow response is invalid.");
-    wfIdMap.set(String(entry.tempId), id);
-  }
-
-  for (const [wfId, updates] of Object.entries(pendingBatch.wfUpdates || {})) {
-    if (deactivatedWfSet.has(String(wfId)) || !Object.keys(updates || {}).length) continue;
-    const resolved = wfIdMap.get(String(wfId)) ?? wfId;
-    await updateWorkflowAction(resolved, updates);
-  }
-
-  const stageIdMap = new Map();
-
-  for (const entry of pendingBatch.stageCreates || []) {
-    const draftWfId = entry?.payload?.wf_id;
-    const resolved = wfIdMap.get(String(draftWfId ?? "")) ?? draftWfId;
-    if (!resolved || deactivatedWfSet.has(String(resolved))) continue;
-    const created = await createWorkflowStageAction({ ...entry.payload, wf_id: resolved });
-    const stageId = created?.wfs_id;
-    if (stageId != null && stageId !== "") {
-      stageIdMap.set(String(entry.tempId), stageId);
-    }
-  }
-
-  for (const [stageId, updates] of Object.entries(pendingBatch.stageUpdates || {})) {
-    if (deactivatedStageSet.has(String(stageId)) || !Object.keys(updates || {}).length) continue;
-    await updateWorkflowStageAction(stageId, updates);
-  }
-
-  for (const stageId of pendingBatch.stageDeactivations || []) {
-    if (isTempStageId(stageId)) continue;
-    await deactivateWorkflowStageAction(stageId);
-  }
-
-  for (const wfId of pendingBatch.wfDeactivations || []) {
-    if (isTempWorkflowId(wfId)) continue;
-    await deactivateWorkflowAction(wfId);
-  }
-
-  for (const stageId of pendingBatch.stageHardDeletes || []) {
-    if (isTempStageId(stageId)) continue;
-    await hardDeleteWorkflowStageAction(stageId);
-  }
-
-  for (const wfId of pendingBatch.wfHardDeletes || []) {
-    if (isTempWorkflowId(wfId)) continue;
-    await hardDeleteWorkflowAction(wfId);
-  }
-
-  const orderedPersistedWfIds = orderedWorkflows
-    .map((wf) => wf?.wf_id)
-    .map((id) => wfIdMap.get(String(id ?? "")) ?? id)
-    .filter((id) => id != null && id !== "")
-    .filter((id) => !deactivatedWfSet.has(String(id)))
-    .filter((id) => !isTempWorkflowId(id));
-
-  if (orderedPersistedWfIds.length > 0) {
-    await saveWorkflowOrderAction(orderedPersistedWfIds);
-  }
-
-  // ── Stage Participant batch save ──
-
-  const deactivatedParticipantSet = new Set(
-    [...(pendingBatch.participantDeactivations || []), ...(pendingBatch.participantHardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  for (const entry of pendingBatch.participantCreates || []) {
-    const draftWfsId = entry?.payload?.wfs_id;
-    const resolvedWfsId = stageIdMap.get(String(draftWfsId ?? "")) ?? draftWfsId;
-    if (!resolvedWfsId || deactivatedStageSet.has(String(resolvedWfsId))) continue;
-    if (isTempStageId(String(resolvedWfsId))) continue; // can't create participant for a temp stage that hasn't been saved
-    await createStageParticipantAction({ ...entry.payload, wfs_id: resolvedWfsId });
-  }
-
-  for (const [participantId, updates] of Object.entries(pendingBatch.participantUpdates || {})) {
-    if (deactivatedParticipantSet.has(String(participantId)) || !Object.keys(updates || {}).length) continue;
-    if (isTempStageParticipantId(String(participantId))) continue;
-    await updateStageParticipantAction(participantId, updates);
-  }
-
-  for (const participantId of pendingBatch.participantDeactivations || []) {
-    if (isTempStageParticipantId(String(participantId))) continue;
-    await deactivateStageParticipantAction(participantId);
-  }
-
-  for (const participantId of pendingBatch.participantHardDeletes || []) {
-    if (isTempStageParticipantId(String(participantId))) continue;
-    await hardDeleteStageParticipantAction(participantId);
-  }
-
-  // ── User Org Role batch save ──
-
-  const deactivatedUserRoleSet = new Set(
-    [...(pendingBatch.userRoleDeactivations || []), ...(pendingBatch.userRoleHardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  for (const entry of pendingBatch.userRoleCreates || []) {
-    await createUserOrgRoleAction(entry.payload);
-  }
-
-  for (const [userRoleId, updates] of Object.entries(pendingBatch.userRoleUpdates || {})) {
-    if (deactivatedUserRoleSet.has(String(userRoleId)) || !Object.keys(updates || {}).length) continue;
-    if (isTempUserOrgRoleId(String(userRoleId))) continue;
-    await updateUserOrgRoleAction(userRoleId, updates);
-  }
-
-  for (const userRoleId of pendingBatch.userRoleDeactivations || []) {
-    if (isTempUserOrgRoleId(String(userRoleId))) continue;
-    await deactivateUserOrgRoleAction(userRoleId);
-  }
-
-  for (const userRoleId of pendingBatch.userRoleHardDeletes || []) {
-    if (isTempUserOrgRoleId(String(userRoleId))) continue;
-    await hardDeleteUserOrgRoleAction(userRoleId);
-  }
-
-  return { wfIdMap, deactivatedWfSet, orderedPersistedWfIds };
+  return {
+    wfIdMap: new Map(Object.entries(result?.wfIdMap || {})),
+    deactivatedWfSet: new Set(result?.deactivatedWfIds || []),
+    orderedPersistedWfIds: result?.orderedPersistedWfIds || [],
+  };
 }
 
 // ─── REFERENCE TABLE BATCH SAVE ────────────────────────────
@@ -373,72 +235,13 @@ export async function executeReferenceBatchSave(pendingBatch, options) {
 // ─── ORG ROLE BATCH SAVE ───────────────────────────────────
 
 export async function executeOrgRoleBatchSave(pendingBatch) {
-  const roleIdMap = new Map();
-  const userRoleIdMap = new Map();
-  const deactivatedRoleSet = new Set(
-    [...(pendingBatch.roleDeactivations || []), ...(pendingBatch.roleHardDeletes || [])].map((id) => String(id ?? "")),
-  );
-  const deactivatedUserRoleSet = new Set(
-    [...(pendingBatch.userRoleDeactivations || []), ...(pendingBatch.userRoleHardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  // 1. Create org roles
-  for (const entry of pendingBatch.roleCreates || []) {
-    const created = await createOrgRoleAction(entry.payload);
-    const id = created?.orgrole_id;
-    if (id == null || id === "") throw new Error("Created org role response is invalid.");
-    roleIdMap.set(String(entry.tempId), id);
-  }
-
-  // 2. Update org roles
-  for (const [roleId, updates] of Object.entries(pendingBatch.roleUpdates || {})) {
-    if (deactivatedRoleSet.has(String(roleId)) || !Object.keys(updates || {}).length) continue;
-    const resolved = roleIdMap.get(String(roleId)) ?? roleId;
-    await updateOrgRoleAction(resolved, updates);
-  }
-
-  // 3. Create users in charge
-  for (const entry of pendingBatch.userRoleCreates || []) {
-    const draftRoleId = entry?.payload?.role_id;
-    const resolvedRoleId = roleIdMap.get(String(draftRoleId ?? "")) ?? draftRoleId;
-    if (!resolvedRoleId || deactivatedRoleSet.has(String(resolvedRoleId))) continue;
-    const created = await createUserOrgRoleAction({ ...entry.payload, role_id: resolvedRoleId });
-    const id = created?.user_orgrole_id;
-    if (id == null || id === "") throw new Error("Created user org role response is invalid.");
-    userRoleIdMap.set(String(entry.tempId), id);
-  }
-
-  // 4. Update users in charge
-  for (const [userRoleId, updates] of Object.entries(pendingBatch.userRoleUpdates || {})) {
-    if (deactivatedUserRoleSet.has(String(userRoleId)) || !Object.keys(updates || {}).length) continue;
-    const resolved = userRoleIdMap.get(String(userRoleId)) ?? userRoleId;
-    if (isTempUserOrgRoleId(String(resolved))) continue;
-    await updateUserOrgRoleAction(resolved, updates);
-  }
-
-  // 5. Deactivate users in charge
-  for (const userRoleId of pendingBatch.userRoleDeactivations || []) {
-    if (isTempUserOrgRoleId(String(userRoleId))) continue;
-    await deactivateUserOrgRoleAction(userRoleId);
-  }
-
-  // 6. Deactivate org roles (cascades to users in charge server-side)
-  for (const roleId of pendingBatch.roleDeactivations || []) {
-    if (isTempOrgRoleId(String(roleId))) continue;
-    await deactivateOrgRoleAction(roleId);
-  }
-
-  // 7. Hard delete users in charge
-  for (const userRoleId of pendingBatch.userRoleHardDeletes || []) {
-    if (isTempUserOrgRoleId(String(userRoleId))) continue;
-    await hardDeleteUserOrgRoleAction(userRoleId);
-  }
-
-  // 8. Hard delete org roles (cascades to users in charge server-side)
-  for (const roleId of pendingBatch.roleHardDeletes || []) {
-    if (isTempOrgRoleId(String(roleId))) continue;
-    await hardDeleteOrgRoleAction(roleId);
-  }
-
-  return { roleIdMap, userRoleIdMap, deactivatedRoleSet, deactivatedUserRoleSet };
+  // The whole batch is saved in one server call (saveOrgRoleBatch); it used to be
+  // one call per change. Returns the same shape as before.
+  const result = await saveOrgRoleBatch(pendingBatch);
+  return {
+    roleIdMap: new Map(Object.entries(result?.roleIdMap || {})),
+    userRoleIdMap: new Map(Object.entries(result?.userRoleIdMap || {})),
+    deactivatedRoleSet: new Set(result?.deactivatedRoleIds || []),
+    deactivatedUserRoleSet: new Set(result?.deactivatedUserRoleIds || []),
+  };
 }

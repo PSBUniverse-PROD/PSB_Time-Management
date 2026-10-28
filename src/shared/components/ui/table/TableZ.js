@@ -230,6 +230,8 @@ function validateTableProps({
  * @param {boolean} props.draggable Enable drag-and-drop ordering.
  * @param {Function} props.onReorder Receives the reordered rows.
  * @param {Array<Object>} props.filterConfig Filter Toolbar definitions.
+ * @param {Object} [props.defaultFilters] Uncontrolled mode: filter values the Filter Toolbar starts with, by filter key (e.g. { status: ["Planned"] }).
+ * @param {Function} [props.onFiltersChange] Uncontrolled mode: called with the current filter values (by filter key, plus `search`) after the user changes them.
  * @param {Object} props.state Controlled table state.
  * @param {Function} props.onChange Controlled-mode event channel.
  * @param {boolean} props.hideSearch Hide the Search Toolbar.
@@ -253,6 +255,8 @@ export default function TableZ({
   onReorder,
   state,
   filterConfig = [],
+  defaultFilters = null,
+  onFiltersChange,
   onChange,
   onHeaderContextMenu,
   loading = false,
@@ -326,7 +330,7 @@ export default function TableZ({
     showActionColumn === true
     && (draggable === true || (Array.isArray(actions) && actions.length > 0));
 
-  const [uncontrolledFilters, setUncontrolledFilters] = useState({});
+  const [uncontrolledFilters, setUncontrolledFilters] = useState(() => (isPlainObject(defaultFilters) ? { ...defaultFilters } : {}));
   const [uncontrolledSorting, setUncontrolledSorting] = useState({ key: "", direction: "" });
   const [uncontrolledPage, setUncontrolledPage] = useState(1);
   const [uncontrolledPageSize, setUncontrolledPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -334,6 +338,18 @@ export default function TableZ({
   const [uncontrolledColumnSizing, setUncontrolledColumnSizing] = useState({});
 
   const effectiveFilters = controlledMode ? tableState.filters : uncontrolledFilters;
+
+  // Uncontrolled mode: report filter changes made by the user (not the starting values).
+  const onFiltersChangeRef = useRef(onFiltersChange);
+  useEffect(() => {
+    onFiltersChangeRef.current = onFiltersChange;
+  }, [onFiltersChange]);
+  const reportedFiltersRef = useRef(uncontrolledFilters);
+  useEffect(() => {
+    if (controlledMode || reportedFiltersRef.current === uncontrolledFilters) return;
+    reportedFiltersRef.current = uncontrolledFilters;
+    onFiltersChangeRef.current?.(uncontrolledFilters);
+  }, [controlledMode, uncontrolledFilters]);
   const effectiveSorting = controlledMode ? tableState.normalizedSorting : normalizeSortingState(uncontrolledSorting);
   const effectiveColumnVisibilityState = controlledMode ? state?.columnVisibility : uncontrolledColumnVisibility;
   const effectiveColumnSizingState = controlledMode ? state?.columnSizing : uncontrolledColumnSizing;

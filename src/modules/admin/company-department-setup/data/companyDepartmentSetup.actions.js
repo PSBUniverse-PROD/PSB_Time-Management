@@ -79,11 +79,8 @@ export async function deactivateCompanyAction(companyId) {
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
 
-  // Cascade deactivate linked departments
-  const { data: linkedDepts } = await supabase.from("psb_s_department").select("dept_id").eq("comp_id", companyId);
-  for (const dept of linkedDepts || []) {
-    await supabase.from("psb_s_department").update({ is_active: false }).eq("dept_id", dept.dept_id);
-  }
+  // Cascade deactivate linked departments (all in one query)
+  await supabase.from("psb_s_department").update({ is_active: false }).eq("comp_id", companyId);
 
   const { data, error } = await supabase.from("psb_s_company").update({ is_active: false }).eq("comp_id", companyId).select("*").single();
   if (error) throw new Error(error.message || "Failed to deactivate company");
@@ -94,10 +91,10 @@ export async function hardDeleteCompanyAction(companyId) {
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
 
-  // Cascade delete linked departments
+  // Cascade delete linked departments (counted first for the reply, then deleted in one query)
   const { data: linkedDepts } = await supabase.from("psb_s_department").select("dept_id").eq("comp_id", companyId);
-  for (const dept of linkedDepts || []) {
-    await supabase.from("psb_s_department").delete().eq("dept_id", dept.dept_id);
+  if ((linkedDepts || []).length > 0) {
+    await supabase.from("psb_s_department").delete().eq("comp_id", companyId);
   }
 
   const { error } = await supabase.from("psb_s_company").delete().eq("comp_id", companyId);
@@ -162,4 +159,76 @@ export async function hardDeleteDepartmentAction(departmentId) {
   const { error } = await supabase.from("psb_s_department").delete().eq("dept_id", departmentId);
   if (error) throw new Error(error.message || "Failed to permanently delete department");
   return { departmentId, permanentlyDeleted: true };
+}
+
+// ─── Batch save ────────────────────────────────────────────
+
+// Same prefixes as TEMP_COMPANY_PREFIX / TEMP_DEPARTMENT_PREFIX in companyDepartmentSetup.data.js.
+const TEMP_COMPANY_ID_PREFIX = "tmp-company-";
+const TEMP_DEPARTMENT_ID_PREFIX = "tmp-department-";
+
+/**
+ * Saves a whole staged batch in ONE call from the browser (it used to be one
+ * call per change). Same step order as before: company creates → company
+ * edits → company deactivations → department creates → department edits →
+ * department deactivations → department deletes → company deletes. The items
+ * of each step run together. Returns { companyIdMap: { tempId: newId } }.
+ */
+export async function saveCompanyDepartmentBatch(companyChanges, departmentChanges) {
+  const companies = companyChanges || {};
+  const departments = departmentChanges || {};
+  const companyIdMap = {};
+  const isTempCompany = (id) => String(id ?? "").startsWith(TEMP_COMPANY_ID_PREFIX);
+  const isTempDepartment = (id) => String(id ?? "").startsWith(TEMP_DEPARTMENT_ID_PREFIX);
+  const resolveCompanyId = (id) => companyIdMap[String(id ?? "")] ?? id;
+  const deactivatedCompanySet = new Set(
+    [...(companies.deactivations || []), ...(companies.hardDeletes || [])].map((id) => String(id ?? "")),
+  );
+  const deactivatedDepartmentSet = new Set(
+    [...(departments.deactivations || []), ...(departments.hardDeletes || [])].map((id) => String(id ?? "")),
+  );
+
+  await Promise.all((companies.creates || []).map(async (entry) => {
+    const created = await createCompanyAction(entry.payload);
+    const id = created?.comp_id;
+    if (id == null || id === "") throw new Error("Created company response is invalid.");
+    companyIdMap[String(entry.tempId)] = id;
+  }));
+
+  await Promise.all(Object.entries(companies.updates || {}).map(async ([companyId, updates]) => {
+    const resolved = resolveCompanyId(companyId);
+    if (deactivatedCompanySet.has(String(resolved)) || isTempCompany(resolved)) return;
+    if (Object.keys(updates || {}).length === 0) return;
+    await updateCompanyAction(resolved, updates);
+  }));
+
+  await Promise.all((companies.deactivations || []).map(async (companyId) => {
+    const resolved = resolveCompanyId(companyId);
+    if (isTempCompany(resolved)) return;
+    await deactivateCompanyAction(resolved);
+  }));
+
+  await Promise.all((departments.creates || []).map(async (entry) => {
+    const resolved = resolveCompanyId(entry?.payload?.comp_id);
+    if (!resolved || deactivatedCompanySet.has(String(resolved))) return;
+    if (isTempCompany(resolved)) throw new Error("Save company batch first before saving departments for a newly created company.");
+    await createDepartmentAction({ ...entry.payload, comp_id: resolved });
+  }));
+
+  await Promise.all(Object.entries(departments.updates || {}).map(async ([deptId, updates]) => {
+    if (deactivatedDepartmentSet.has(String(deptId)) || isTempDepartment(deptId)) return;
+    if (Object.keys(updates || {}).length === 0) return;
+    await updateDepartmentAction(deptId, updates);
+  }));
+
+  await Promise.all((departments.deactivations || []).filter((id) => !isTempDepartment(id)).map((id) => deactivateDepartmentAction(id)));
+  await Promise.all((departments.hardDeletes || []).filter((id) => !isTempDepartment(id)).map((id) => hardDeleteDepartmentAction(id)));
+
+  await Promise.all((companies.hardDeletes || []).map(async (companyId) => {
+    const resolved = resolveCompanyId(companyId);
+    if (isTempCompany(resolved)) return;
+    await hardDeleteCompanyAction(resolved);
+  }));
+
+  return { companyIdMap };
 }

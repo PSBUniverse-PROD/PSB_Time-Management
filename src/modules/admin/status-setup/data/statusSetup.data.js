@@ -7,12 +7,7 @@
  * - Batch save orchestration (via Server Actions)
  */
 
-import {
-  createStatusAction,
-  updateStatusAction,
-  deactivateStatusAction,
-  hardDeleteStatusAction,
-} from "./statusSetup.actions.js";
+import { saveStatusBatch } from "./statusSetup.actions.js";
 
 // ─── MODEL HELPERS ─────────────────────────────────────────
 
@@ -103,38 +98,8 @@ export function createEmptyStatusChanges() {
 
 // ─── BATCH SAVE (calls Server Actions) ─────────────────────
 
+// The whole batch is saved in one server call (saveStatusBatch); it used to be
+// one call per change.
 export async function executeBatchSave(statusChanges) {
-  const deactivatedSet = new Set(
-    [...(statusChanges.deactivations || []), ...(statusChanges.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-  const tempIdMap = new Map();
-
-  for (const createEntry of statusChanges.creates || []) {
-    const created = await createStatusAction(createEntry.payload);
-    const createdId = created?.status_id;
-    if (createdId === undefined || createdId === null || createdId === "") {
-      throw new Error("Created status response is invalid.");
-    }
-    tempIdMap.set(String(createEntry.tempId), createdId);
-  }
-
-  for (const [statusId, updates] of Object.entries(statusChanges.updates || {})) {
-    const resolvedStatusId = tempIdMap.get(String(statusId)) ?? statusId;
-    if (deactivatedSet.has(String(resolvedStatusId))) continue;
-    if (isTempStatusId(resolvedStatusId)) continue;
-    if (Object.keys(updates || {}).length === 0) continue;
-    await updateStatusAction(resolvedStatusId, updates);
-  }
-
-  for (const statusId of statusChanges.deactivations || []) {
-    const resolvedStatusId = tempIdMap.get(String(statusId)) ?? statusId;
-    if (isTempStatusId(resolvedStatusId)) continue;
-    await deactivateStatusAction(resolvedStatusId);
-  }
-
-  for (const statusId of statusChanges.hardDeletes || []) {
-    const resolvedStatusId = tempIdMap.get(String(statusId)) ?? statusId;
-    if (isTempStatusId(resolvedStatusId)) continue;
-    await hardDeleteStatusAction(resolvedStatusId);
-  }
+  await saveStatusBatch(statusChanges);
 }

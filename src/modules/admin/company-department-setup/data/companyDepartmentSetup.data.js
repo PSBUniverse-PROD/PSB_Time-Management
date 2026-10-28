@@ -4,10 +4,7 @@
  * Model helpers, batch state management, and batch save orchestration.
  */
 
-import {
-  createCompanyAction, updateCompanyAction, deactivateCompanyAction, hardDeleteCompanyAction,
-  createDepartmentAction, updateDepartmentAction, deactivateDepartmentAction, hardDeleteDepartmentAction,
-} from "./companyDepartmentSetup.actions.js";
+import { saveCompanyDepartmentBatch } from "./companyDepartmentSetup.actions.js";
 
 // ─── MODEL HELPERS ─────────────────────────────────────────
 
@@ -118,71 +115,11 @@ export function remapDepartmentsByCompanyId(departments, companyIdMap) {
 // ─── BATCH SAVE (calls Server Actions) ─────────────────────
 
 export async function executeBatchSave(companyChanges, departmentChanges, orderedCompanies, selectedCompanyId) {
-  const companyIdMap = new Map();
+  const result = await saveCompanyDepartmentBatch(companyChanges, departmentChanges);
+  const companyIdMap = new Map(Object.entries(result?.companyIdMap || {}));
   const deactivatedCompanySet = new Set(
     [...(companyChanges.deactivations || []), ...(companyChanges.hardDeletes || [])].map((id) => String(id ?? "")),
   );
-  const deactivatedDepartmentSet = new Set(
-    [...(departmentChanges.deactivations || []), ...(departmentChanges.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  // Create companies
-  for (const entry of companyChanges.creates || []) {
-    const created = await createCompanyAction(entry.payload);
-    const id = created?.comp_id;
-    if (id == null || id === "") throw new Error("Created company response is invalid.");
-    companyIdMap.set(String(entry.tempId), id);
-  }
-
-  // Update companies
-  for (const [companyId, updates] of Object.entries(companyChanges.updates || {})) {
-    const resolved = companyIdMap.get(String(companyId)) ?? companyId;
-    if (deactivatedCompanySet.has(String(resolved)) || isTempCompanyId(resolved)) continue;
-    if (Object.keys(updates || {}).length === 0) continue;
-    await updateCompanyAction(resolved, updates);
-  }
-
-  // Deactivate companies
-  for (const companyId of companyChanges.deactivations || []) {
-    const resolved = companyIdMap.get(String(companyId)) ?? companyId;
-    if (isTempCompanyId(resolved)) continue;
-    await deactivateCompanyAction(resolved);
-  }
-
-  // Create departments (remap comp_id for newly created companies)
-  for (const entry of departmentChanges.creates || []) {
-    const draftCompId = entry?.payload?.comp_id;
-    const resolved = companyIdMap.get(String(draftCompId ?? "")) ?? draftCompId;
-    if (!resolved || deactivatedCompanySet.has(String(resolved))) continue;
-    if (isTempCompanyId(resolved)) throw new Error("Save company batch first before saving departments for a newly created company.");
-    await createDepartmentAction({ ...entry.payload, comp_id: resolved });
-  }
-
-  // Update departments
-  for (const [deptId, updates] of Object.entries(departmentChanges.updates || {})) {
-    if (deactivatedDepartmentSet.has(String(deptId)) || isTempDepartmentId(deptId)) continue;
-    if (Object.keys(updates || {}).length === 0) continue;
-    await updateDepartmentAction(deptId, updates);
-  }
-
-  // Deactivate departments
-  for (const deptId of departmentChanges.deactivations || []) {
-    if (isTempDepartmentId(deptId)) continue;
-    await deactivateDepartmentAction(deptId);
-  }
-
-  // Hard delete departments
-  for (const deptId of departmentChanges.hardDeletes || []) {
-    if (isTempDepartmentId(deptId)) continue;
-    await hardDeleteDepartmentAction(deptId);
-  }
-
-  // Hard delete companies
-  for (const companyId of companyChanges.hardDeletes || []) {
-    const resolved = companyIdMap.get(String(companyId)) ?? companyId;
-    if (isTempCompanyId(resolved)) continue;
-    await hardDeleteCompanyAction(resolved);
-  }
 
   const orderedPersistedCompanyIds = orderedCompanies
     .map((c) => companyIdMap.get(String(c?.comp_id ?? "")) ?? c?.comp_id)

@@ -4,17 +4,7 @@
  * Model helpers, batch state management, and batch save orchestration.
  */
 
-import {
-  createApplicationAction,
-  updateApplicationAction,
-  deactivateApplicationAction,
-  hardDeleteApplicationAction,
-  createRoleAction,
-  updateRoleAction,
-  deactivateRoleAction,
-  hardDeleteRoleAction,
-  saveApplicationOrderAction,
-} from "./applicationSetup.actions.js";
+import { saveApplicationSetupBatch } from "./applicationSetup.actions.js";
 
 // ─── MODEL HELPERS ─────────────────────────────────────────
 
@@ -147,70 +137,16 @@ export function isTempRoleId(v) { return String(v ?? "").startsWith(TEMP_ROLE_PR
 
 // ─── BATCH SAVE (calls Server Actions) ─────────────────────
 
+// The whole batch is saved in one server call (saveApplicationSetupBatch); it
+// used to be one call per change. Returns the same shape as before.
 export async function executeBatchSave(pendingBatch, orderedApplications) {
-  const appIdMap = new Map();
-  const deactivatedAppSet = new Set(
-    [...(pendingBatch.appDeactivations || []), ...(pendingBatch.appHardDeletes || [])].map((id) => String(id ?? "")),
+  const result = await saveApplicationSetupBatch(
+    pendingBatch,
+    (Array.isArray(orderedApplications) ? orderedApplications : []).map((app) => app?.app_id),
   );
-  const deactivatedRoleSet = new Set(
-    [...(pendingBatch.roleDeactivations || []), ...(pendingBatch.roleHardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  for (const entry of pendingBatch.appCreates || []) {
-    const created = await createApplicationAction(entry.payload);
-    const id = created?.app_id;
-    if (id == null || id === "") throw new Error("Created application response is invalid.");
-    appIdMap.set(String(entry.tempId), id);
-  }
-
-  for (const [appId, updates] of Object.entries(pendingBatch.appUpdates || {})) {
-    if (deactivatedAppSet.has(String(appId)) || !Object.keys(updates || {}).length) continue;
-    const resolved = appIdMap.get(String(appId)) ?? appId;
-    await updateApplicationAction(resolved, updates);
-  }
-
-  for (const entry of pendingBatch.roleCreates || []) {
-    const draftAppId = entry?.payload?.app_id;
-    const resolved = appIdMap.get(String(draftAppId ?? "")) ?? draftAppId;
-    if (!resolved || deactivatedAppSet.has(String(resolved))) continue;
-    await createRoleAction({ ...entry.payload, app_id: resolved });
-  }
-
-  for (const [roleId, updates] of Object.entries(pendingBatch.roleUpdates || {})) {
-    if (deactivatedRoleSet.has(String(roleId)) || !Object.keys(updates || {}).length) continue;
-    await updateRoleAction(roleId, updates);
-  }
-
-  for (const roleId of pendingBatch.roleDeactivations || []) {
-    if (isTempRoleId(roleId)) continue;
-    await deactivateRoleAction(roleId);
-  }
-
-  for (const appId of pendingBatch.appDeactivations || []) {
-    if (isTempApplicationId(appId)) continue;
-    await deactivateApplicationAction(appId);
-  }
-
-  for (const roleId of pendingBatch.roleHardDeletes || []) {
-    if (isTempRoleId(roleId)) continue;
-    await hardDeleteRoleAction(roleId);
-  }
-
-  for (const appId of pendingBatch.appHardDeletes || []) {
-    if (isTempApplicationId(appId)) continue;
-    await hardDeleteApplicationAction(appId);
-  }
-
-  const orderedPersistedAppIds = orderedApplications
-    .map((app) => app?.app_id)
-    .map((id) => appIdMap.get(String(id ?? "")) ?? id)
-    .filter((id) => id != null && id !== "")
-    .filter((id) => !deactivatedAppSet.has(String(id)))
-    .filter((id) => !isTempApplicationId(id));
-
-  if (orderedPersistedAppIds.length > 0) {
-    await saveApplicationOrderAction(orderedPersistedAppIds);
-  }
-
-  return { appIdMap, deactivatedAppSet, orderedPersistedAppIds };
+  return {
+    appIdMap: new Map(Object.entries(result?.appIdMap || {})),
+    deactivatedAppSet: new Set(result?.deactivatedAppIds || []),
+    orderedPersistedAppIds: result?.orderedPersistedAppIds || [],
+  };
 }

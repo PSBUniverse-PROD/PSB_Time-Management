@@ -116,3 +116,45 @@ export async function hardDeleteStatusAction(statusId) {
   if (error) throw new Error(error.message || "Failed to permanently delete status");
   return { statusId, permanentlyDeleted: true };
 }
+
+// Same prefix as TEMP_STATUS_PREFIX in statusSetup.data.js.
+const TEMP_STATUS_ID_PREFIX = "tmp-status-";
+
+/**
+ * Saves a whole staged batch in ONE call from the browser (it used to be one
+ * call per change). Same step order as before: creates → edits →
+ * deactivations → permanent deletes; the items of each step run together.
+ */
+export async function saveStatusBatch(statusChanges) {
+  const changes = statusChanges || {};
+  const tempIdMap = {};
+  const isTempStatus = (id) => String(id ?? "").startsWith(TEMP_STATUS_ID_PREFIX);
+  const resolveStatusId = (id) => tempIdMap[String(id ?? "")] ?? id;
+  const deactivatedSet = new Set(
+    [...(changes.deactivations || []), ...(changes.hardDeletes || [])].map((id) => String(id ?? "")),
+  );
+
+  await Promise.all((changes.creates || []).map(async (entry) => {
+    const created = await createStatusAction(entry.payload);
+    const createdId = created?.status_id;
+    if (createdId === undefined || createdId === null || createdId === "") throw new Error("Created status response is invalid.");
+    tempIdMap[String(entry.tempId)] = createdId;
+  }));
+
+  await Promise.all(Object.entries(changes.updates || {}).map(async ([statusId, updates]) => {
+    const resolved = resolveStatusId(statusId);
+    if (deactivatedSet.has(String(resolved)) || isTempStatus(resolved)) return;
+    if (Object.keys(updates || {}).length === 0) return;
+    await updateStatusAction(resolved, updates);
+  }));
+
+  await Promise.all((changes.deactivations || []).map(async (statusId) => {
+    const resolved = resolveStatusId(statusId);
+    if (!isTempStatus(resolved)) await deactivateStatusAction(resolved);
+  }));
+
+  await Promise.all((changes.hardDeletes || []).map(async (statusId) => {
+    const resolved = resolveStatusId(statusId);
+    if (!isTempStatus(resolved)) await hardDeleteStatusAction(resolved);
+  }));
+}

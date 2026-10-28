@@ -242,6 +242,48 @@ export async function hardDeleteDealerAction(dealerId) {
   return { dealerId, permanentlyDeleted: true };
 }
 
+// Same prefix as TEMP_DEALER_PREFIX in dealerMasterSetup.data.js.
+const TEMP_DEALER_ID_PREFIX = "tmp-dealer-";
+
+/**
+ * Saves a whole staged batch in ONE call from the browser (it used to be one
+ * call per change). Same step order as before: creates → edits →
+ * deactivations → permanent deletes; the items of each step run together.
+ */
+export async function saveDealerBatch(dealerChanges) {
+  const changes = dealerChanges || {};
+  const tempIdMap = {};
+  const isTempDealer = (id) => String(id ?? "").startsWith(TEMP_DEALER_ID_PREFIX);
+  const resolveDealerId = (id) => tempIdMap[String(id ?? "")] ?? id;
+  const deactivatedSet = new Set(
+    [...(changes.deactivations || []), ...(changes.hardDeletes || [])].map((id) => String(id ?? "")),
+  );
+
+  await Promise.all((changes.creates || []).map(async (entry) => {
+    const created = await createDealerAction(entry.payload);
+    const createdId = created?.dealer_id;
+    if (createdId === undefined || createdId === null || createdId === "") throw new Error("Created dealer response is invalid.");
+    tempIdMap[String(entry.tempId)] = createdId;
+  }));
+
+  await Promise.all(Object.entries(changes.updates || {}).map(async ([dealerId, updates]) => {
+    const resolved = resolveDealerId(dealerId);
+    if (deactivatedSet.has(String(resolved)) || isTempDealer(resolved)) return;
+    if (Object.keys(updates || {}).length === 0) return;
+    await updateDealerAction(resolved, updates);
+  }));
+
+  await Promise.all((changes.deactivations || []).map(async (dealerId) => {
+    const resolved = resolveDealerId(dealerId);
+    if (!isTempDealer(resolved)) await deactivateDealerAction(resolved);
+  }));
+
+  await Promise.all((changes.hardDeletes || []).map(async (dealerId) => {
+    const resolved = resolveDealerId(dealerId);
+    if (!isTempDealer(resolved)) await hardDeleteDealerAction(resolved);
+  }));
+}
+
 function toDealerAccountError(error, fallback) {
   if (error?.code === "23505") return new Error("That username is already in use.");
   return new Error(error?.message || fallback);
@@ -331,4 +373,3 @@ export async function saveDealerLoginAction(dealerId, input = {}) {
   if (error) throw toDealerAccountError(error, "Failed to create dealer login.");
   return { ...data, created: true };
 }
-

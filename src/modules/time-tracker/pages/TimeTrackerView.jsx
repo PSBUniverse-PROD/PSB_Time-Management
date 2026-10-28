@@ -1281,7 +1281,9 @@ function WorkScheduleCard({ schedule, weeklyHoursTarget }) {
   return (
     <div className="tt-summary-schedule-card">
       <div className="tt-summary-schedule-head">
-        <span className="tt-summary-schedule-name">{schedule.modelName || "Work Schedule"}</span>
+        <span className="tt-summary-schedule-name" title={schedule.modelName || undefined}>
+          {schedule.modelCode || schedule.modelName || "Work Schedule"}
+        </span>
         <span className="tt-summary-schedule-hours">{weeklyHoursTarget.toFixed(2)} hrs/week</span>
       </div>
 
@@ -1794,7 +1796,7 @@ function EmployeeHoursSection() {
     const pickable = models.filter((m) => m.is_active && m.days.length > 0);
     const pickableOptions = pickable.map((m) => ({
       value: m.model_id,
-      label: `${m.model_name} · ${formatHours(m.weekly_hours)}`,
+      label: `${m.model_code} · ${formatHours(m.weekly_hours)}`,
     }));
 
     return [
@@ -1807,7 +1809,7 @@ function EmployeeHoursSection() {
           const current = models.find((m) => m.model_id === row.model_id);
           const showCurrentSeparately = current && !pickable.includes(current);
           const options = showCurrentSeparately
-            ? [{ value: current.model_id, label: `${current.model_name} (inactive)` }, ...pickableOptions]
+            ? [{ value: current.model_id, label: `${current.model_code} (inactive)` }, ...pickableOptions]
             : pickableOptions;
 
           return (
@@ -1887,11 +1889,34 @@ const TIME_FIELD_TO_RESOLVED = {
   endTime: "end",
 };
 
+const TIME_FIELD_LABELS = {
+  startTime: "Clock In",
+  breakStart: "Break Start",
+  breakEnd: "Break End",
+  endTime: "Clock Out",
+};
+
+// "08:00" → "8AM", "17:30" → "5:30PM" (for the suggested model name).
+function shortTimeLabel(hhmm) {
+  const [h, m] = String(hhmm || "").split(":").map(Number);
+  const suffix = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 || 12;
+  return m ? `${hour12}:${String(m).padStart(2, "0")}${suffix}` : `${hour12}${suffix}`;
+}
+
+// e.g. "8AM–5PM, Break 12PM–1PM" (no break → "8AM–5PM").
+function suggestScheduleModelName({ startTime, breakStart, breakEnd, endTime }) {
+  const shift = `${shortTimeLabel(startTime)}–${shortTimeLabel(endTime)}`;
+  return breakStart && breakEnd ? `${shift}, Break ${shortTimeLabel(breakStart)}–${shortTimeLabel(breakEnd)}` : shift;
+}
+
 function ScheduleModelModal({ model, onClose, onSave }) {
-  const [modelCode, setModelCode] = useState(model?.model_code || "");
+  // Code and order are automatic (saveScheduleModel); only the name is typed.
   const [modelName, setModelName] = useState(model?.model_name || "");
-  const [displayOrder, setDisplayOrder] = useState(model?.display_order ?? 0);
   const [days, setDays] = useState(() => buildEditorDays(model?.days));
+  // Quick setup: one row of times applied to the picked days (Mon–Fri by default).
+  const [quickDays, setQuickDays] = useState(() => new Set([1, 2, 3, 4, 5]));
+  const [quickTimes, setQuickTimes] = useState({ startTime: "", breakStart: "", breakEnd: "", endTime: "" });
   const [saving, setSaving] = useState(false);
 
   const updateDay = (dayOfWeek, patch) => {
@@ -1947,6 +1972,38 @@ function ScheduleModelModal({ model, onClose, onSave }) {
     );
   };
 
+  const quickError = quickTimes.startTime && quickTimes.endTime ? validateScheduleDay(quickTimes) : null;
+
+  const toggleQuickDay = (dayOfWeek) => {
+    setQuickDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(dayOfWeek)) next.delete(dayOfWeek);
+      else next.add(dayOfWeek);
+      return next;
+    });
+  };
+
+  // Fills the picked days with the quick-setup times (other days stay as they
+  // are) and suggests a name from the times when none is typed yet.
+  const applyQuickSetup = () => {
+    if (!quickTimes.startTime || !quickTimes.endTime) {
+      toastWarning("Enter Clock In and Clock Out first.", "Schedule Model");
+      return;
+    }
+    if (quickError) {
+      toastWarning(quickError, "Schedule Model");
+      return;
+    }
+    if (!quickDays.size) {
+      toastWarning("Pick at least one day.", "Schedule Model");
+      return;
+    }
+    setDays((prev) =>
+      prev.map((d) => (quickDays.has(d.dayOfWeek) ? { ...d, working: true, ...quickTimes } : d)),
+    );
+    if (!modelName.trim()) setModelName(suggestScheduleModelName(quickTimes));
+  };
+
   const workingDays = days.filter((d) => d.working);
   const dayErrors = useMemo(
     () => new Map(days.filter((d) => d.working).map((d) => [d.dayOfWeek, validateScheduleDay(d)])),
@@ -1956,8 +2013,8 @@ function ScheduleModelModal({ model, onClose, onSave }) {
   const weeklyHours = computeScheduledWeeklyHours(workingDays);
 
   const handleSave = async () => {
-    if (!modelCode.trim() || !modelName.trim()) {
-      toastWarning("Enter a code and a name.", "Schedule Model");
+    if (!modelName.trim()) {
+      toastWarning("Enter a name.", "Schedule Model");
       return;
     }
     if (!workingDays.length) {
@@ -1973,9 +2030,7 @@ function ScheduleModelModal({ model, onClose, onSave }) {
     try {
       await onSave({
         modelId: model?.model_id || null,
-        modelCode,
         modelName,
-        displayOrder,
         days: workingDays.map(({ dayOfWeek, startTime, breakStart, breakEnd, endTime }) => ({
           dayOfWeek,
           startTime,
@@ -2008,31 +2063,57 @@ function ScheduleModelModal({ model, onClose, onSave }) {
     >
       <div className="tt-schedule-header-fields">
         <label className="tt-modal-field">
-          <span className="tt-modal-label">Code</span>
-          <Input
-            value={modelCode}
-            onChange={(event) => setModelCode(event.target.value)}
-            placeholder="e.g. FULL_TIME_REGULAR"
-            maxLength={30}
-          />
-        </label>
-        <label className="tt-modal-field">
           <span className="tt-modal-label">Name</span>
           <Input
             value={modelName}
             onChange={(event) => setModelName(event.target.value)}
-            placeholder="e.g. Full Time (Regular)"
+            placeholder="e.g. Full Time (Regular) — or leave empty and use Quick setup"
             maxLength={50}
           />
         </label>
-        <label className="tt-modal-field tt-schedule-order-field">
-          <span className="tt-modal-label">Order</span>
-          <Input
-            type="number"
-            value={displayOrder}
-            onChange={(event) => setDisplayOrder(event.target.value)}
-          />
-        </label>
+        {model?.model_code && (
+          <label className="tt-modal-field">
+            <span className="tt-modal-label">Code (automatic)</span>
+            <Input value={model.model_code} disabled />
+          </label>
+        )}
+      </div>
+
+      {/* Quick setup: pick the days, fill one row, Apply. Days that differ are
+          fine-tuned in the table below. */}
+      <div className="tt-schedule-quick">
+        <span className="tt-modal-label">Quick setup</span>
+        <div className="tt-schedule-quick-days">
+          {SCHEDULE_DAYS.map((meta) => (
+            <button
+              key={meta.dayOfWeek}
+              type="button"
+              className={`tt-schedule-quick-day ${quickDays.has(meta.dayOfWeek) ? "is-on" : ""}`}
+              aria-pressed={quickDays.has(meta.dayOfWeek)}
+              onClick={() => toggleQuickDay(meta.dayOfWeek)}
+            >
+              {meta.short}
+            </button>
+          ))}
+        </div>
+        <div className="tt-schedule-quick-times">
+          {TIME_FIELDS.map((field) => (
+            <label key={field} className="tt-modal-field">
+              <span className="tt-modal-label">{TIME_FIELD_LABELS[field]}</span>
+              <input
+                type="time"
+                className="tt-modal-input tt-schedule-time"
+                value={quickTimes[field]}
+                onChange={(event) => setQuickTimes((prev) => ({ ...prev, [field]: event.target.value }))}
+                aria-label={`Quick setup ${TIME_FIELD_LABELS[field]}`}
+              />
+            </label>
+          ))}
+          <Button type="button" variant="secondary" onClick={applyQuickSetup}>
+            Apply to {quickDays.size} day{quickDays.size === 1 ? "" : "s"}
+          </Button>
+        </div>
+        {quickError && <span className="tt-schedule-error">{quickError}</span>}
       </div>
 
       <div className="tt-schedule-grid-head">
@@ -2110,9 +2191,9 @@ function ScheduleModelModal({ model, onClose, onSave }) {
 
       <p className="tt-setup-hint tt-schedule-note">
         All times are Central Time (Dallas). Clock-in has a 10-minute grace period; after that,
-        each hour late costs 0.5 hr for 11–45 min and 1 hr for 46–59 min. The break is deducted
-        only after the first half of the day&apos;s hours, so half
-        days keep their full time (leave both break times empty for no break). Work after Clock
+        each hour late costs 0.5 hr for 11–45 min and 1 hr for 46–59 min. Only the part of the
+        break you were clocked in for is deducted (e.g. break 2–3: 1:00–5:00 counts 3 hr,
+        8:00–1:00 counts 5 hr; leave both break times empty for no break). Work after Clock
         Out counts as overtime in 30-minute blocks. Clocking in early also counts as overtime in
         30-minute blocks counted back from Clock In: nothing under 30 min early, then each further
         block counts once you are within 10 min of it (e.g. for 8:00 — 7:30 is 0.5 hr, 7:10 is 1 hr).

@@ -313,9 +313,10 @@ export function summarizeScheduleDays(dayNumbers) {
  * - Lateness is deducted by the minutes past each full hour late: 0–10 min
  *   grace, 11–45 min → 0.5 hr, 46–59 min → 1 hr (e.g. 8:40 → counts from
  *   8:30, 9:05 → from 9:00).
- * - The break only reduces counted time past the first half of the day's
- *   scheduled work hours, up to the full break length, so half days keep
- *   their full hours.
+ * - Break: only the part of the scheduled break the employee was clocked in
+ *   for comes off, so where the break is matters, not just its length
+ *   (e.g. break 2–3: 1:00–5:00 → 3 hrs, 8:00–1:00 → 5 hrs; a full day loses
+ *   the full break).
  * - Overtime = early overtime plus late overtime. No cap.
  *   Late: time after the scheduled clock-out in 30-minute blocks
  *   (OVERTIME_BLOCK_MINUTES), rounded down (e.g. 1h46m → 1.5); leftover
@@ -404,17 +405,15 @@ export function computeLogHours({ clockInDate, clockInTime, clockOutDate, clockO
 
   const countedMin = Math.max(countedOutMin - countedInMin, 0);
 
-  // Break: only counted time inside the scheduled hours is reduced, so the
-  // break never eats into overtime or goes below zero.
-  const regularMin = Math.max(Math.min(countedOutMin, shift.end) - countedInMin, 0);
-
-  // Half days keep their break time: the break only reduces counted time
-  // past the first half of the day's scheduled work hours (shift − break).
-  // e.g. 8:00–5:00 with a 1-hr break = 8 work hrs, so the first 4 hrs never
-  // lose break time; a full day still loses the full hour.
-  const breakLengthMin = shift.breakStart != null ? shift.breakEnd - shift.breakStart : 0;
-  const halfDayMin = (shift.end - shift.start - breakLengthMin) / 2;
-  const breakMin = Math.min(breakLengthMin, Math.max(regularMin - halfDayMin, 0));
+  // Break: only the part of the scheduled break that falls inside the
+  // counted time (up to the scheduled clock-out) comes off, so the break
+  // never eats into overtime or goes below zero, and its own time matters.
+  // e.g. 8:00–5:00: break 2–3 → 1:00–5:00 = 3 hrs, 8:00–1:00 = 5 hrs;
+  // break 12–1 → 8:00–2:00 = 5 hrs, 8:00–12:00 = 4 hrs; full day loses the full break.
+  const regularUntilMin = Math.min(countedOutMin, shift.end);
+  const breakMin = shift.breakStart != null
+    ? Math.max(Math.min(regularUntilMin, shift.breakEnd) - Math.max(countedInMin, shift.breakStart), 0)
+    : 0;
 
   // Overtime is already whole 30-min blocks; round only the regular part to
   // half-hour steps, so the day's total is always a multiple of 0.5.

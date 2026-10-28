@@ -4,13 +4,7 @@
  * Model helpers, batch state management, and batch save orchestration.
  */
 
-import {
-  createCardGroupAction, updateCardGroupAction, deactivateCardGroupAction,
-  hardDeleteCardGroupAction, saveCardGroupOrderAction,
-  createCardAction, updateCardAction, deactivateCardAction,
-  hardDeleteCardAction, saveCardOrderAction,
-  upsertCardRoleAccessAction, removeCardRoleAccessAction,
-} from "./cardModuleSetup.actions.js";
+import { saveCardModuleBatch } from "./cardModuleSetup.actions.js";
 
 // ─── MODEL HELPERS ─────────────────────────────────────────
 
@@ -153,90 +147,17 @@ export function isTempCardId(v) { return String(v ?? "").startsWith(TEMP_CARD_PR
 
 // ─── BATCH SAVE (calls Server Actions) ─────────────────────
 
+// The whole batch is saved in one server call (saveCardModuleBatch); it used
+// to be one call per change. Card order is only sent for groups whose order
+// changed on screen. Returns the same shape as before.
 export async function executeBatchSave(pendingBatch, appGroups, allCards, persistedCardOrderSignatures) {
-  const groupIdMap = new Map();
-  const cardIdMap = new Map();
-  const deactivatedGroupSet = new Set(
-    [...(pendingBatch.groupDeactivations || []), ...(pendingBatch.groupHardDeletes || [])].map((id) => String(id ?? "")),
-  );
   const deactivatedCardSet = new Set(
     [...(pendingBatch.cardDeactivations || []), ...(pendingBatch.cardHardDeletes || [])].map((id) => String(id ?? "")),
   );
 
-  // Create groups
-  for (const entry of pendingBatch.groupCreates || []) {
-    const created = await createCardGroupAction(entry.payload);
-    const id = created?.group_id;
-    if (id == null || id === "") throw new Error("Created card group response is invalid.");
-    groupIdMap.set(String(entry.tempId), id);
-  }
-
-  // Update groups
-  for (const [gid, updates] of Object.entries(pendingBatch.groupUpdates || {})) {
-    if (deactivatedGroupSet.has(String(gid)) || !Object.keys(updates || {}).length) continue;
-    const resolved = groupIdMap.get(String(gid)) ?? gid;
-    await updateCardGroupAction(resolved, updates);
-  }
-
-  // Create cards
-  for (const entry of pendingBatch.cardCreates || []) {
-    const draftGid = entry?.payload?.group_id;
-    const resolved = groupIdMap.get(String(draftGid ?? "")) ?? draftGid;
-    if (!resolved || deactivatedGroupSet.has(String(resolved))) continue;
-    const created = await createCardAction({ ...entry.payload, group_id: resolved });
-    const realCardId = created?.card_id;
-    if (realCardId != null && realCardId !== "" && entry.tempId) {
-      cardIdMap.set(String(entry.tempId), String(realCardId));
-    }
-  }
-
-  // Update cards
-  for (const [cid, updates] of Object.entries(pendingBatch.cardUpdates || {})) {
-    if (deactivatedCardSet.has(String(cid)) || !Object.keys(updates || {}).length) continue;
-    const resolvedCid = cardIdMap.get(String(cid)) ?? cid;
-    if (isTempCardId(resolvedCid)) continue;
-    await updateCardAction(resolvedCid, updates);
-  }
-
-  // Deactivate cards
-  for (const cid of pendingBatch.cardDeactivations || []) {
-    if (isTempCardId(cid)) continue;
-    await deactivateCardAction(cid);
-  }
-
-  // Deactivate groups
-  for (const gid of pendingBatch.groupDeactivations || []) {
-    if (isTempGroupId(gid)) continue;
-    await deactivateCardGroupAction(gid);
-  }
-
-  // Hard delete cards
-  for (const cid of pendingBatch.cardHardDeletes || []) {
-    if (isTempCardId(cid)) continue;
-    await hardDeleteCardAction(cid);
-  }
-
-  // Hard delete groups
-  for (const gid of pendingBatch.groupHardDeletes || []) {
-    if (isTempGroupId(gid)) continue;
-    await hardDeleteCardGroupAction(gid);
-  }
-
-  // Save group order
-  const orderedPersistedGroupIds = appGroups
-    .map((g) => g?.group_id).map((id) => groupIdMap.get(String(id ?? "")) ?? id)
-    .filter((id) => id != null && id !== "")
-    .filter((id) => !deactivatedGroupSet.has(String(id))).filter((id) => !isTempGroupId(id));
-
-  if (orderedPersistedGroupIds.length > 0) {
-    await saveCardGroupOrderAction(orderedPersistedGroupIds);
-  }
-
-  // Save card order per group
+  const cardOrders = [];
   for (const group of appGroups) {
     const gid = String(group?.group_id ?? "");
-    const resolvedGid = groupIdMap.get(gid) ?? group?.group_id;
-    if (deactivatedGroupSet.has(String(resolvedGid))) continue;
     const groupCards = allCards
       .filter((c) => isSameId(c?.group_id, group?.group_id))
       .sort((a, b) => {
@@ -248,29 +169,14 @@ export async function executeBatchSave(pendingBatch, appGroups, allCards, persis
     const orderedCardIds = groupCards.map((c) => c?.card_id)
       .filter((id) => id != null && id !== "")
       .filter((id) => !deactivatedCardSet.has(String(id))).filter((id) => !isTempCardId(id));
-    if (orderedCardIds.length > 0) {
-      await saveCardOrderAction(orderedCardIds);
-    }
+    if (orderedCardIds.length > 0) cardOrders.push({ groupId: group?.group_id, cardIds: orderedCardIds });
   }
 
-  // Save role access adds
-  for (const entry of pendingBatch.roleAccessAdds || []) {
-    const rawCardId = String(entry?.card_id ?? "");
-    const cardId = cardIdMap.get(rawCardId) ?? rawCardId;
-    const roleId = String(entry?.role_id ?? "");
-    if (!cardId || !roleId || isTempCardId(cardId)) continue;
-    if (deactivatedCardSet.has(cardId)) continue;
-    await upsertCardRoleAccessAction(cardId, roleId);
-  }
-
-  // Save role access removes
-  for (const entry of pendingBatch.roleAccessRemoves || []) {
-    const rawCardId = String(entry?.card_id ?? "");
-    const cardId = cardIdMap.get(rawCardId) ?? rawCardId;
-    const roleId = String(entry?.role_id ?? "");
-    if (!cardId || !roleId || isTempCardId(cardId)) continue;
-    await removeCardRoleAccessAction(cardId, roleId);
-  }
-
-  return { groupIdMap, cardIdMap, deactivatedGroupSet, orderedPersistedGroupIds };
+  const result = await saveCardModuleBatch(pendingBatch, appGroups.map((g) => g?.group_id), cardOrders);
+  return {
+    groupIdMap: new Map(Object.entries(result?.groupIdMap || {})),
+    cardIdMap: new Map(Object.entries(result?.cardIdMap || {})),
+    deactivatedGroupSet: new Set(result?.deactivatedGroupIds || []),
+    orderedPersistedGroupIds: result?.orderedPersistedGroupIds || [],
+  };
 }

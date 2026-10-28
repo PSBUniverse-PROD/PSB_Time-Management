@@ -876,6 +876,35 @@ export async function loadScheduleModels() {
   });
 }
 
+// Code and display order for a NEW schedule model, both automatic:
+// - code: the name in capitals, anything other than letters/digits → "_"
+//   (max 30 characters, e.g. "Full Time 8AM–5PM" → "FULL_TIME_8AM_5PM");
+//   "_2", "_3" … is added when that code is already taken.
+// - order: one more than the highest existing order, so new models go last.
+const MODEL_CODE_MAX = 30;
+
+async function nextScheduleModelCodeAndOrder(supabase, name) {
+  const { data, error } = await supabase
+    .from("time_s_schedulemodel")
+    .select("model_code, display_order");
+  if (error) throw new Error(describeError(error));
+
+  const rows = data || [];
+  const base = name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, MODEL_CODE_MAX) || "MODEL";
+  const taken = new Set(rows.map((row) => String(row.model_code || "").toUpperCase()));
+  let code = base;
+  for (let n = 2; taken.has(code); n += 1) {
+    const suffix = `_${n}`;
+    code = `${base.slice(0, MODEL_CODE_MAX - suffix.length)}${suffix}`;
+  }
+  const order = rows.reduce((max, row) => Math.max(max, Number(row.display_order) || 0), 0) + 1;
+  return { code, order };
+}
+
 /**
  * Create (modelId null) or update a schedule model and its working days.
  *
@@ -888,17 +917,14 @@ export async function loadScheduleModels() {
  * Note: Supabase JS has no multi-statement transaction, so everything is
  * validated BEFORE the first write to keep partial saves unlikely.
  */
-export async function saveScheduleModel({ modelId, modelCode, modelName, displayOrder, days }) {
+export async function saveScheduleModel({ modelId, modelName, days }) {
   const auth = await requireTimeTrackerAdmin();
   if (auth.error) return { success: false, error: auth.error };
   const { userId, supabase } = auth;
 
-  const code = String(modelCode || "").trim().toUpperCase().replace(/\s+/g, "_");
   const name = String(modelName || "").trim();
-  const order = Number(displayOrder) || 0;
 
-  if (!code || !name) return { success: false, error: "Code and Name are required." };
-  if (code.length > 30) return { success: false, error: "Code must be 30 characters or less." };
+  if (!name) return { success: false, error: "Name is required." };
   if (name.length > 50) return { success: false, error: "Name must be 50 characters or less." };
 
   // ── Validate every working day before writing anything ──
@@ -930,6 +956,8 @@ export async function saveScheduleModel({ modelId, modelCode, modelName, display
   }
 
   // ── Save the model header ──
+  // Code and order are set once, when the model is created
+  // (nextScheduleModelCodeAndOrder); editing changes only the name and days.
   let savedModelId = modelId || null;
   const now = new Date().toISOString();
 
@@ -937,9 +965,7 @@ export async function saveScheduleModel({ modelId, modelCode, modelName, display
     const { error } = await supabase
       .from("time_s_schedulemodel")
       .update({
-        model_code: code,
         model_name: name,
-        display_order: order,
         updated_at: now,
         updated_by: userId,
       })
@@ -947,19 +973,28 @@ export async function saveScheduleModel({ modelId, modelCode, modelName, display
 
     if (error) {
       console.error("saveScheduleModel update error:", describeError(error));
-      if (error.code === "23505") return { success: false, error: `The code "${code}" is already used.` };
       return { success: false, error: "Failed to save the schedule model." };
     }
   } else {
+    let next;
+    try {
+      next = await nextScheduleModelCodeAndOrder(supabase, name);
+    } catch (err) {
+      console.error("saveScheduleModel code/order error:", err.message);
+      return { success: false, error: "Failed to create the schedule model." };
+    }
+
     const { data, error } = await supabase
       .from("time_s_schedulemodel")
-      .insert({ model_code: code, model_name: name, display_order: order, created_by: userId })
+      .insert({ model_code: next.code, model_name: name, display_order: next.order, created_by: userId })
       .select("model_id")
       .single();
 
     if (error) {
       console.error("saveScheduleModel insert error:", describeError(error));
-      if (error.code === "23505") return { success: false, error: `The code "${code}" is already used.` };
+      if (error.code === "23505") {
+        return { success: false, error: "Another model with the same name was saved at the same time. Please save again." };
+      }
       return { success: false, error: "Failed to create the schedule model." };
     }
     savedModelId = data.model_id;
