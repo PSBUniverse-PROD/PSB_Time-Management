@@ -70,6 +70,7 @@ import {
   saveTimeLogEntry as saveTimeLogEntryAction,
   setEditReasonActive,
   setScheduleModelActive,
+  deleteScheduleModel,
   setUserScheduleModel,
   submitTimesheet as submitTimesheetAction,
 } from "../data/timeTracker.actions";
@@ -2209,6 +2210,8 @@ function ScheduleModelsSection() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalModel, setModalModel] = useState(null); // null = closed, {} = new, row = editing
+  // Which models the table shows: "active" (default), "inactive" or "all".
+  const [modelTab, setModelTab] = useState("active");
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -2247,6 +2250,35 @@ function ScheduleModelsSection() {
     },
     [reload],
   );
+
+  const handleDelete = useCallback(
+    async (row) => {
+      const result = await deleteScheduleModel(row.model_id);
+      if (result.success) {
+        toastSuccess("Model deleted.", "Setup");
+        reload();
+      } else {
+        toastError(result.error || "Failed to delete model.", "Setup");
+      }
+    },
+    [reload],
+  );
+
+  // Tabs above the table, with how many models each holds.
+  const modelTabs = useMemo(() => {
+    const activeCount = rows.filter((row) => row.is_active).length;
+    return [
+      { key: "active", label: `Active (${activeCount})` },
+      { key: "inactive", label: `Inactive (${rows.length - activeCount})` },
+      { key: "all", label: `All (${rows.length})` },
+    ];
+  }, [rows]);
+
+  const visibleRows = useMemo(() => {
+    if (modelTab === "active") return rows.filter((row) => row.is_active);
+    if (modelTab === "inactive") return rows.filter((row) => !row.is_active);
+    return rows;
+  }, [rows, modelTab]);
 
   const columns = useMemo(
     () => [
@@ -2301,8 +2333,18 @@ function ScheduleModelsSection() {
         visible: (row) => !row.is_active,
         onClick: (row) => handleToggleActive(row, true),
       },
+      {
+        key: "delete",
+        label: "Delete",
+        icon: "trash",
+        type: "danger",
+        confirm: true,
+        confirmMessage: (row) => `Permanently delete "${row.model_code}"? This can't be undone.`,
+        visible: (row) => !row.is_active,
+        onClick: (row) => handleDelete(row),
+      },
     ],
-    [handleToggleActive],
+    [handleToggleActive, handleDelete],
   );
 
   return (
@@ -2314,8 +2356,21 @@ function ScheduleModelsSection() {
         </Button>
       </div>
 
+      <div className="tt-setup-subtabs">
+        {modelTabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className={`tt-setup-subtab ${modelTab === tab.key ? "active" : ""}`}
+            onClick={() => setModelTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <TableZ
-        data={rows}
+        data={visibleRows}
         columns={columns}
         rowIdKey="model_id"
         actions={actions}

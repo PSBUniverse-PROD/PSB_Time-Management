@@ -877,30 +877,36 @@ export async function loadScheduleModels() {
 }
 
 // Code and display order for a NEW schedule model, both automatic:
-// - code: the name in capitals, anything other than letters/digits → "_"
-//   (max 30 characters, e.g. "Full Time 8AM–5PM" → "FULL_TIME_8AM_5PM");
-//   "_2", "_3" … is added when that code is already taken.
+// - code: "TTSM-" + a letter + 3 digits, running TTSM-A001 → TTSM-A999 →
+//   TTSM-B001 … TTSM-Z999. The next one after the highest existing TTSM code;
+//   codes in another style are ignored.
 // - order: one more than the highest existing order, so new models go last.
-const MODEL_CODE_MAX = 30;
+const MODEL_CODE_PREFIX = "TTSM-";
+const MODEL_CODE_PATTERN = /^TTSM-([A-Z])(\d{3})$/;
+const MODEL_CODES_PER_LETTER = 999;
 
-async function nextScheduleModelCodeAndOrder(supabase, name) {
+async function nextScheduleModelCodeAndOrder(supabase) {
   const { data, error } = await supabase
     .from("time_s_schedulemodel")
     .select("model_code, display_order");
   if (error) throw new Error(describeError(error));
 
   const rows = data || [];
-  const base = name
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, MODEL_CODE_MAX) || "MODEL";
-  const taken = new Set(rows.map((row) => String(row.model_code || "").toUpperCase()));
-  let code = base;
-  for (let n = 2; taken.has(code); n += 1) {
-    const suffix = `_${n}`;
-    code = `${base.slice(0, MODEL_CODE_MAX - suffix.length)}${suffix}`;
+  // Running number of a code: TTSM-A001 = 0 … TTSM-A999 = 998, TTSM-B001 = 999 …
+  const highest = rows.reduce((max, row) => {
+    const match = String(row.model_code || "").toUpperCase().match(MODEL_CODE_PATTERN);
+    if (!match || Number(match[2]) < 1) return max;
+    const number = (match[1].charCodeAt(0) - 65) * MODEL_CODES_PER_LETTER + (Number(match[2]) - 1);
+    return Math.max(max, number);
+  }, -1);
+  const next = highest + 1;
+  if (next >= 26 * MODEL_CODES_PER_LETTER) {
+    throw new Error("No schedule model codes left (TTSM-Z999 reached).");
   }
+  const letter = String.fromCharCode(65 + Math.floor(next / MODEL_CODES_PER_LETTER));
+  const digits = String((next % MODEL_CODES_PER_LETTER) + 1).padStart(3, "0");
+  const code = `${MODEL_CODE_PREFIX}${letter}${digits}`;
+
   const order = rows.reduce((max, row) => Math.max(max, Number(row.display_order) || 0), 0) + 1;
   return { code, order };
 }
@@ -978,7 +984,7 @@ export async function saveScheduleModel({ modelId, modelName, days }) {
   } else {
     let next;
     try {
-      next = await nextScheduleModelCodeAndOrder(supabase, name);
+      next = await nextScheduleModelCodeAndOrder(supabase);
     } catch (err) {
       console.error("saveScheduleModel code/order error:", err.message);
       return { success: false, error: "Failed to create the schedule model." };
@@ -993,7 +999,7 @@ export async function saveScheduleModel({ modelId, modelName, days }) {
     if (error) {
       console.error("saveScheduleModel insert error:", describeError(error));
       if (error.code === "23505") {
-        return { success: false, error: "Another model with the same name was saved at the same time. Please save again." };
+        return { success: false, error: "Another model was saved at the same time. Please save again." };
       }
       return { success: false, error: "Failed to create the schedule model." };
     }
@@ -1085,6 +1091,60 @@ export async function setScheduleModelActive(modelId, isActive) {
   if (error) {
     console.error("setScheduleModelActive error:", describeError(error));
     return { success: false, error: "Failed to update the model's status." };
+  }
+  return { success: true };
+}
+
+/**
+ * Permanently delete a schedule model (its working days go with it — the
+ * database cascades time_s_schedulemodelday).
+ *
+ * Business Rule:
+ * Only an inactive model can be deleted (deactivate first), and not while
+ * any employee row (time_m_userhourstarget, active or not) still points at it
+ * — the database refuses that too. Its code may later be given to a new model.
+ */
+export async function deleteScheduleModel(modelId) {
+  const auth = await requireTimeTrackerAdmin();
+  if (auth.error) return { success: false, error: auth.error };
+  const { supabase } = auth;
+
+  const { data: model, error: modelError } = await supabase
+    .from("time_s_schedulemodel")
+    .select("model_id, model_code, is_active")
+    .eq("model_id", modelId)
+    .maybeSingle();
+
+  if (modelError) {
+    console.error("deleteScheduleModel model error:", describeError(modelError));
+    return { success: false, error: "Unable to load this model." };
+  }
+  if (!model) return { success: false, error: "This model no longer exists." };
+  if (model.is_active) return { success: false, error: "Deactivate the model before deleting it." };
+
+  const { count, error: countError } = await supabase
+    .from("time_m_userhourstarget")
+    .select("target_id", { count: "exact", head: true })
+    .eq("model_id", modelId);
+
+  if (countError) {
+    console.error("deleteScheduleModel count error:", describeError(countError));
+    return { success: false, error: "Unable to check who uses this model." };
+  }
+  if (count > 0) {
+    return {
+      success: false,
+      error: `${count} employee record${count === 1 ? " still points" : "s still point"} at this model. Move them to another model first.`,
+    };
+  }
+
+  const { error } = await supabase.from("time_s_schedulemodel").delete().eq("model_id", modelId);
+  if (error) {
+    console.error("deleteScheduleModel error:", describeError(error));
+    if (error.code === "23503") {
+      return { success: false, error: "This model is still in use, so it can't be deleted." };
+    }
+    return { success: false, error: "Failed to delete the model." };
   }
   return { success: true };
 }
