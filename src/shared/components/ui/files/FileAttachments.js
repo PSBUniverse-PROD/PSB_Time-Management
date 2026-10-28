@@ -103,6 +103,9 @@ function resolveFileIcon(file) {
  * @param {number} [maxBytes] - client-side size limit (the server must check too)
  * @param {boolean} [readOnly=false] - list and open files only: no Add file,
  *   no drag-and-drop upload, no delete (the server must refuse those too)
+ * @param {(file: object) => boolean} [canDeleteFile] - when given, decides per
+ *   file whether its Delete button shows, also while readOnly (e.g. "your own
+ *   files only"). Left out: Delete follows readOnly. The server must check too.
  */
 export default function FileAttachments({
   loadFiles,
@@ -114,6 +117,7 @@ export default function FileAttachments({
   accept = DEFAULT_ACCEPT,
   maxBytes = DEFAULT_MAX_BYTES,
   readOnly = false,
+  canDeleteFile = null,
 }) {
   const [files, setFiles] = useState(null); // null = still loading
   const [pending, setPending] = useState([]); // uploads in flight: { key, name }
@@ -298,7 +302,7 @@ export default function FileAttachments({
                 </button>
                 {details ? <div style={{ fontSize: "9px", color: "#94a3b8" }}>{details}</div> : null}
               </div>
-              {!readOnly && (
+              {(canDeleteFile ? canDeleteFile(file) : !readOnly) && (
                 <button
                   type="button"
                   className="psb-ui-file-delete"
