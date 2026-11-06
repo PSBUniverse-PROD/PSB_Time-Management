@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { SearchSelect, toastError, toastSuccess } from "@/shared/components/ui";
-import { loadUsCitiesByStateAction } from "@/modules/admin/dealer-master-setup/data/dealerMasterSetup.actions.js";
+import { SearchSelect, toastSuccess } from "@/shared/components/ui";
+import { loadUsCitiesByStateAction } from "../data/usAddress.actions";
 import { updateDealerProfileAction } from "../data/dealerPortal.actions";
+import { errorFromResult, showDealerError } from "../data/dealerErrorReport";
 
 const TITLE = "Business address";
 const KEYS = ["address_line1", "address_line2", "state", "city", "postal_code"];
@@ -65,13 +66,13 @@ export default function DealerAddressForm({ initialValues, states }) {
       const payload = Object.fromEntries(KEYS.map((key) => [key, values[key] ?? ""]));
       const result = await updateDealerProfileAction("address", payload);
       if (!result?.success) {
-        toastError(result?.error || "Unable to save your changes.", TITLE);
+        showDealerError(errorFromResult(result, "Unable to save your changes."), { title: TITLE, action: "Saving the business address" });
         return;
       }
       toastSuccess("Your changes have been saved.", TITLE);
       router.refresh();
     } catch {
-      toastError("Unable to save your changes. Please try again.", TITLE);
+      showDealerError(new Error("Unable to save your changes. Please try again."), { title: TITLE, action: "Saving the business address" });
     } finally {
       setSaving(false);
     }

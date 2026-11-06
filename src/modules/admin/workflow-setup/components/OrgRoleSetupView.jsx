@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, InlineEditCell, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
+import { Button, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
 import {
   isSameId, compareText,
   mapOrgRoleRow, mapUserOrgRoleRow, removeObjectKey, mergeUpdatePatch, appendUniqueId,
@@ -38,8 +38,6 @@ function useOrgRoleSetup({ orgRoles = [], userOrgRoles = [], users = [] }) {
   const [dialog, setDialog] = useState(EMPTY_DIALOG);
   const [roleDraft, setRoleDraft] = useState({ name: "", desc: "" });
   const [userRoleDraft, setUserRoleDraft] = useState({ userId: "", isPrimary: false, isActive: true });
-  const [editingRoleId, setEditingRoleId] = useState(null);
-  const [editingUserRoleId, setEditingUserRoleId] = useState(null);
   const [expandedRoleId, setExpandedRoleId] = useState(null);
   const batchActiveRef = useRef(false);
 
@@ -49,7 +47,6 @@ function useOrgRoleSetup({ orgRoles = [], userOrgRoles = [], users = [] }) {
     setIsMutatingAction(false); setIsSavingBatch(false);
     setPendingBatch(createEmptyOrgRoleBatchState()); setDialog(EMPTY_DIALOG);
     setRoleDraft({ name: "", desc: "" }); setUserRoleDraft({ userId: "", isPrimary: false, isActive: true });
-    setEditingRoleId(null); setEditingUserRoleId(null);
   }, [seedRoles, seedUserRoles]);
 
   const pendingSummary = useMemo(() => {
@@ -131,7 +128,6 @@ function useOrgRoleSetup({ orgRoles = [], userOrgRoles = [], users = [] }) {
     setOrderedRoles(seedRoles); setAllUserRoles(seedUserRoles);
     setPendingBatch(createEmptyOrgRoleBatchState()); setDialog(EMPTY_DIALOG);
     setRoleDraft({ name: "", desc: "" }); setUserRoleDraft({ userId: "", isPrimary: false, isActive: true });
-    setEditingRoleId(null); setEditingUserRoleId(null);
     toastSuccess("Batch changes canceled.", "Batching");
   }, [hasPendingChanges, isMutatingAction, isSavingBatch, seedRoles, seedUserRoles]);
 
@@ -146,7 +142,7 @@ function useOrgRoleSetup({ orgRoles = [], userOrgRoles = [], users = [] }) {
       toastSuccess(`Saved ${pendingSummary.total} batched change(s).`, "Save Batch");
     } catch (error) {
       toastError(error?.message || "Failed to save batched changes.");
-    } finally { setIsMutatingAction(false); setIsSavingBatch(false); setEditingRoleId(null); setEditingUserRoleId(null); }
+    } finally { setIsMutatingAction(false); setIsSavingBatch(false); }
   }, [hasPendingChanges, isMutatingAction, isSavingBatch, pendingBatch, pendingSummary.total, router]);
 
   const closeDialog = useCallback(() => { if (!isMutatingAction && !isSavingBatch) setDialog(EMPTY_DIALOG); }, [isMutatingAction, isSavingBatch]);
@@ -388,23 +384,6 @@ function useOrgRoleSetup({ orgRoles = [], userOrgRoles = [], users = [] }) {
     toastSuccess("User deactivation staged for Save Batch.", "Batching");
   }, [dialog]);
 
-  // ── Inline editing ──
-
-  const startEditingRole = useCallback((row) => { if (isMutatingAction || isSavingBatch) return; const id = String(row?.orgrole_id ?? ""); setEditingRoleId((prev) => prev === id ? null : id); }, [isMutatingAction, isSavingBatch]);
-  const stopEditingRole = useCallback(() => { setEditingRoleId(null); }, []);
-  const startEditingUserRole = useCallback((row) => { if (isMutatingAction || isSavingBatch) return; const id = String(row?.user_orgrole_id ?? ""); setEditingUserRoleId((prev) => prev === id ? null : id); }, [isMutatingAction, isSavingBatch]);
-  const stopEditingUserRole = useCallback(() => { setEditingUserRoleId(null); }, []);
-
-  const handleInlineEditRole = useCallback((row, key, value) => {
-    const roleId = row?.orgrole_id;
-    if (!roleId || isMutatingAction || isSavingBatch) return;
-    setOrderedRoles((prev) => prev.map((r, i) => isSameId(r?.orgrole_id, roleId) ? mapOrgRoleRow({ ...r, [key]: value || null }, i) : r));
-    setPendingBatch((prev) => {
-      if (isTempOrgRoleId(roleId)) return { ...prev, roleCreates: prev.roleCreates.map((e) => isSameId(e?.tempId, roleId) ? { ...e, payload: { ...e.payload, [key]: value || null } } : e) };
-      return { ...prev, roleUpdates: { ...prev.roleUpdates, [String(roleId)]: mergeUpdatePatch(prev.roleUpdates?.[String(roleId)], { [key]: value || null }) } };
-    });
-  }, [isMutatingAction, isSavingBatch]);
-
   return {
     decoratedRoles, decoratedSelectedRoleUserRoles, dialog, roleDraft, userRoleDraft,
     isMutatingAction, isSavingBatch, pendingSummary, hasPendingChanges,
@@ -417,8 +396,6 @@ function useOrgRoleSetup({ orgRoles = [], userOrgRoles = [], users = [] }) {
     stageHardDeleteRole, unstageHardDeleteRole, submitAddRole, submitEditRole, submitToggleRole, submitDeactivateRole,
     openAddUserRoleDialog, openEditUserRoleDialog, openToggleUserRoleDialog, openDeactivateUserRoleDialog,
     stageHardDeleteUserRole, unstageHardDeleteUserRole, submitAddUserRole, submitEditUserRole, submitToggleUserRole, submitDeactivateUserRole,
-    handleInlineEditRole,
-    editingRoleId, startEditingRole, stopEditingRole, editingUserRoleId, startEditingUserRole, stopEditingUserRole,
   };
 }
 
@@ -454,10 +431,10 @@ function OrgRoleTable({
   decoratedRoles, decoratedSelectedRoleUserRoles, selectedRole, expandedRoleId, isMutatingAction, isSavingBatch,
   pendingDeactivatedRoleIds, pendingDeactivatedUserRoleIds,
   handleRoleRowClick,
-  editingRoleId, onStartEditingRole, onStopEditingRole, onInlineEditRole,
+  // Rows open/close on click, so editing happens in the Edit windows, never inline.
+  openEditRoleDialog,
   openToggleRoleDialog, openDeactivateRoleDialog, stageHardDeleteRole, onUndoBatchActionRole,
   openAddUserRoleDialog,
-  editingUserRoleId, onStartEditingUserRole, onStopEditingUserRole,
   openEditUserRoleDialog, openToggleUserRoleDialog, openDeactivateUserRoleDialog, stageHardDeleteUserRole, onUndoBatchActionUserRole,
   userOptions,
 }) {
@@ -469,35 +446,31 @@ function OrgRoleTable({
   const columns = useMemo(() => [
     { key: "orgrole_id", label: "Role ID", width: "12%", sortable: true, render: (row) => <span className="text-muted small">{row?.orgrole_id ?? "--"}</span> },
     { key: "ref_name", label: "Org Role Name", width: "30%", sortable: true, render: (row) => {
-      const m = batchMarker(row?.__batchState || ""); const isEditing = String(row?.orgrole_id ?? "") === String(editingRoleId ?? ""); const editDisabled = !isEditing || isMutatingAction || isSavingBatch; const isSelected = isSameId(row?.orgrole_id, selectedRole?.orgrole_id);
-      return (<span className={isSelected ? "fw-semibold text-primary" : ""}><InlineEditCell value={row?.ref_name || ""} onCommit={(val) => onInlineEditRole?.(row, "name", val)} onCancel={onStopEditingRole} disabled={editDisabled} />{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
+      const m = batchMarker(row?.__batchState || ""); const isSelected = isSameId(row?.orgrole_id, selectedRole?.orgrole_id);
+      return (<span className={isSelected ? "fw-semibold text-primary" : ""}>{row?.ref_name || ""}{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
     }},
-    { key: "ref_desc", label: "Description", width: "40%", sortable: true, render: (row) => {
-      const isEditing = String(row?.orgrole_id ?? "") === String(editingRoleId ?? ""); const editDisabled = !isEditing || isMutatingAction || isSavingBatch;
-      return <InlineEditCell value={row?.ref_desc === "--" ? "" : (row?.ref_desc || "")} onCommit={(val) => onInlineEditRole?.(row, "description", val)} onCancel={onStopEditingRole} disabled={editDisabled} />;
-    }},
+    { key: "ref_desc", label: "Description", width: "40%", sortable: true, render: (row) => (row?.ref_desc === "--" ? "" : (row?.ref_desc || "")) },
     { key: "is_active_bool", label: "Active", width: "12%", sortable: true, align: "center", render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} /> },
-  ], [editingRoleId, isMutatingAction, isSavingBatch, onInlineEditRole, onStopEditingRole, selectedRole?.orgrole_id]);
+  ], [selectedRole?.orgrole_id]);
 
   const actions = useMemo(() => [
-    { key: "edit-role", label: "Edit", type: "secondary", icon: "pen", visible: (r) => String(r?.orgrole_id ?? "") !== String(editingRoleId ?? ""), disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => onStartEditingRole(r) },
-    { key: "cancel-edit-role", label: "Cancel", type: "secondary", icon: "xmark", visible: (r) => String(r?.orgrole_id ?? "") === String(editingRoleId ?? ""), onClick: () => onStopEditingRole() },
-    { key: "add-user", label: "+ Add User", type: "success", icon: "plus", visible: (r) => String(r?.orgrole_id ?? "") !== String(editingRoleId ?? ""), disabled: () => isMutatingAction || isSavingBatch, onClick: () => openAddUserRoleDialog() },
-    { key: "restore-role", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => (!Boolean(r?.is_active_bool) || pendingDeactivatedRoleIds.has(String(r?.orgrole_id ?? ""))) && String(r?.orgrole_id ?? "") !== String(editingRoleId ?? ""), disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => openToggleRoleDialog(r) },
-    { key: "deactivate-role", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedRoleIds.has(String(r?.orgrole_id ?? "")) && String(r?.orgrole_id ?? "") !== String(editingRoleId ?? ""), disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => openDeactivateRoleDialog(r) },
-    { key: "delete-role", label: "Delete", type: "danger", icon: "trash", visible: (r) => String(r?.orgrole_id ?? "") !== String(editingRoleId ?? ""), confirm: true, confirmMessage: (r) => `Permanently delete ${r?.ref_name || "this org role"}? This will also remove its users in charge.`, disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => stageHardDeleteRole(r) },
-  ], [editingRoleId, isMutatingAction, isSavingBatch, onStartEditingRole, onStopEditingRole, openAddUserRoleDialog, openDeactivateRoleDialog, openToggleRoleDialog, pendingDeactivatedRoleIds, stageHardDeleteRole]);
+    { key: "edit-role", label: "Edit", type: "secondary", icon: "pen", disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => openEditRoleDialog(r) },
+    { key: "add-user", label: "+ Add User", type: "success", icon: "plus", disabled: () => isMutatingAction || isSavingBatch, onClick: () => openAddUserRoleDialog() },
+    { key: "restore-role", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedRoleIds.has(String(r?.orgrole_id ?? "")), disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => openToggleRoleDialog(r) },
+    { key: "deactivate-role", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedRoleIds.has(String(r?.orgrole_id ?? "")), disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => openDeactivateRoleDialog(r) },
+    { key: "delete-role", label: "Delete", type: "danger", icon: "trash", confirm: true, confirmMessage: (r) => `Permanently delete ${r?.ref_name || "this org role"}? This will also remove its users in charge.`, disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => stageHardDeleteRole(r) },
+  ], [isMutatingAction, isSavingBatch, openAddUserRoleDialog, openDeactivateRoleDialog, openEditRoleDialog, openToggleRoleDialog, pendingDeactivatedRoleIds, stageHardDeleteRole]);
 
   // ── User-in-charge (detail) columns & actions ──
   const userRoleColumns = useMemo(() => [
     { key: "user_id", label: "User", width: "46%", sortable: true, render: (row) => {
-      const m = batchMarker(row?.__batchState || ""); const isEditing = String(row?.user_orgrole_id ?? "") === String(editingUserRoleId ?? ""); const editDisabled = !isEditing || isMutatingAction || isSavingBatch;
+      const m = batchMarker(row?.__batchState || "");
       const user = userOptions.find((u) => isSameId(u?.user_id, row?.user_id));
       return (<span><span className="small">{user ? getUserLabel(user) : (row?.user_id || "--")}</span>{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
     }},
     { key: "is_primary", label: "Primary", width: "16%", sortable: true, align: "center", render: (row) => (row?.is_primary ? <span className="psb-batch-chip psb-batch-chip-added">Primary</span> : <span className="text-muted small">--</span>) },
     { key: "is_active_bool", label: "Active", width: "14%", sortable: true, align: "center", render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} /> },
-  ], [editingUserRoleId, isMutatingAction, isSavingBatch, userOptions]);
+  ], [userOptions]);
 
   const userRoleActions = useMemo(() => [
     { key: "edit-user-role", label: "Edit", type: "secondary", icon: "pen", disabled: () => isMutatingAction || isSavingBatch, onClick: (r) => openEditUserRoleDialog(r) },
@@ -637,12 +610,10 @@ export default function OrgRoleSetupView({ orgRoles = [], userOrgRoles = [], use
         isMutatingAction={h.isMutatingAction} isSavingBatch={h.isSavingBatch}
         pendingDeactivatedRoleIds={h.pendingDeactivatedRoleIds} pendingDeactivatedUserRoleIds={h.pendingDeactivatedUserRoleIds}
         handleRoleRowClick={h.handleRoleRowClick}
-        editingRoleId={h.editingRoleId} onStartEditingRole={h.startEditingRole} onStopEditingRole={h.stopEditingRole}
-        onInlineEditRole={h.handleInlineEditRole}
+        openEditRoleDialog={h.openEditRoleDialog}
         openToggleRoleDialog={h.openToggleRoleDialog} openDeactivateRoleDialog={h.openDeactivateRoleDialog}
         stageHardDeleteRole={h.stageHardDeleteRole} onUndoBatchActionRole={h.unstageHardDeleteRole}
         openAddUserRoleDialog={h.openAddUserRoleDialog}
-        editingUserRoleId={h.editingUserRoleId} onStartEditingUserRole={h.startEditingUserRole} onStopEditingUserRole={h.stopEditingUserRole}
         openEditUserRoleDialog={h.openEditUserRoleDialog} openToggleUserRoleDialog={h.openToggleUserRoleDialog}
         openDeactivateUserRoleDialog={h.openDeactivateUserRoleDialog}
         stageHardDeleteUserRole={h.stageHardDeleteUserRole} onUndoBatchActionUserRole={h.unstageHardDeleteUserRole}

@@ -8,6 +8,7 @@ import {
   getDealerFileUrlAction,
   saveDealerFileAction,
 } from "../data/dealerPortal.actions";
+import { errorFromResult, showDealerError } from "../data/dealerErrorReport";
 import {
   DEALER_DOC_TYPES,
   DEALER_FILE_ACCEPT,
@@ -62,7 +63,7 @@ export default function DealerAttachments({ initialFiles }) {
     const meta = { name: file.name, type: file.type, size: file.size, docType };
     const started = await createDealerFileUploadAction(meta);
     if (!started?.success) {
-      toastError(`${file.name}: ${started?.error || "Upload failed."}`, TITLE);
+      showDealerError(errorFromResult(started, "Upload failed."), { title: TITLE, action: `Uploading ${file.name}` });
       return;
     }
 
@@ -71,13 +72,13 @@ export default function DealerAttachments({ initialFiles }) {
       .storage.from(bucket)
       .uploadToSignedUrl(storagePath, token, file, { contentType: file.type });
     if (error) {
-      toastError(`${file.name}: ${error.message || "Upload failed."}`, TITLE);
+      showDealerError(new Error(error.message || "Upload failed."), { title: TITLE, action: `Uploading ${file.name}` });
       return;
     }
 
     const saved = await saveDealerFileAction({ ...meta, storagePath, note });
     if (!saved?.success) {
-      toastError(`${file.name}: ${saved?.error || "Upload failed."}`, TITLE);
+      showDealerError(errorFromResult(saved, "Upload failed."), { title: TITLE, action: `Uploading ${file.name}` });
       return;
     }
     setFiles((prev) => [saved.file, ...prev]);
@@ -94,7 +95,7 @@ export default function DealerAttachments({ initialFiles }) {
       }
       setNote("");
     } catch {
-      toastError("Upload failed. Please try again.", TITLE);
+      showDealerError(new Error("Upload failed. Please try again."), { title: TITLE, action: "Uploading documents" });
     } finally {
       setUploading(false);
     }
@@ -119,7 +120,7 @@ export default function DealerAttachments({ initialFiles }) {
     const result = await getDealerFileUrlAction(file.id).catch(() => null);
     if (!result?.success) {
       if (win) win.close();
-      toastError(result?.error || "Could not open the file.", TITLE);
+      showDealerError(errorFromResult(result, "Could not open the file."), { title: TITLE, action: `Opening ${file.file_name}` });
       return;
     }
     if (win) win.location.href = result.url;
@@ -189,7 +190,7 @@ export default function DealerAttachments({ initialFiles }) {
                       {file.file_name}
                     </button>
                     <div className="dp-file-meta">
-                      {[typeLabel(file.doc_type), formatFileSize(file.file_size), file.created_text ? `uploaded ${file.created_text}` : "", file.note || ""].filter(Boolean).join(" · ")}
+                      {[typeLabel(file.doc_type), formatFileSize(file.file_size), file.created_text ? `uploaded ${file.created_text}` : "", file.uploaded_by_psb ? "added by PSB" : "", file.note || ""].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                 </div>

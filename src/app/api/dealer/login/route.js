@@ -92,6 +92,6 @@ export async function POST(request) {
     return json({ success: true }, 200, [["Set-Cookie", buildDealerSessionCookie(token, { secure })]]);
   } catch (error) {
     console.error("Dealer login error:", error);
-    return json({ success: false, error: "Unable to sign in right now. Please try again." }, 500);
+    return json({ success: false, error: "Unable to sign in right now. Please try again.", unexpected: true }, 500);
   }
 }

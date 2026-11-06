@@ -4,8 +4,10 @@ import { useState } from "react";
 import Image from "next/image";
 import { Button, Form } from "react-bootstrap";
 import dealerIcon from "@/styles/psb_dealer_icon.svg";
+import DealerErrorHost from "../components/DealerErrorHost";
+import { errorFromResult, showDealerError } from "../data/dealerErrorReport";
 
-export default function DealerLoginView() {
+export default function DealerLoginView({ supportEmail = "" }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -29,12 +31,23 @@ export default function DealerLoginView() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result?.success) {
         setError(result?.error || "Unable to sign in right now. Please try again.");
+        // A wrong password is the dealer's to fix; a server failure also opens the error window.
+        if (result?.unexpected || response.status >= 500) {
+          showDealerError(errorFromResult({ ...result, unexpected: true }, "Unable to sign in right now."), {
+            title: "Dealer sign in",
+            action: "Signing in to the dealer portal",
+          });
+        }
         return;
       }
       // Full navigation so the new cookie is sent with the account page request.
       window.location.assign("/dealer/account");
     } catch {
       setError("Unable to sign in right now. Please try again.");
+      showDealerError(new Error("Unable to sign in right now. Please try again."), {
+        title: "Dealer sign in",
+        action: "Signing in to the dealer portal",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -42,6 +55,7 @@ export default function DealerLoginView() {
 
   return (
     <div className="portal-login-shell">
+      <DealerErrorHost supportEmail={supportEmail} />
       <div className="portal-login-split">
         <aside className="portal-login-brand" aria-hidden="true">
           <div className="portal-login-brand-inner">

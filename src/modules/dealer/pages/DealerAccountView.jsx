@@ -1,7 +1,5 @@
 import { PROFILE_CHECKLIST, hasText } from "../data/dealerPortal.data";
 
-const PSB_CONTACT = { email: "Sales.pgd@premiumsteelgroup.com", phone: "817-502-2520" };
-
 function show(value) {
   return hasText(value) ? String(value).trim() : null;
 }
@@ -16,7 +14,7 @@ function Detail({ label, value, mono = false }) {
 }
 
 /** Overview: profile checklist, summary cards and account facts. */
-export default function DealerAccountView({ dealer, creditLimitText, dealerSinceText, lastLoginText }) {
+export default function DealerAccountView({ dealer, creditLimitText, dealerSinceText, lastLoginText, psbContact = null }) {
   const items = PROFILE_CHECKLIST.map((item) => ({ ...item, done: hasText(dealer?.[item.key]) }));
   const doneCount = items.filter((item) => item.done).length;
   const missing = items.filter((item) => !item.done);
@@ -119,8 +117,8 @@ export default function DealerAccountView({ dealer, creditLimitText, dealerSince
           <div className="dp-panel">
             <div className="dp-panel-head"><h2>Your PSB contact</h2></div>
             <div className="dp-panel-body dp-stack">
-              <div className="dp-contact"><span>Email</span><strong>{PSB_CONTACT.email}</strong></div>
-              <div className="dp-contact"><span>Phone</span><strong className="dp-mono">{PSB_CONTACT.phone}</strong></div>
+              <div className="dp-contact"><span>Email</span><strong>{psbContact?.email || "--"}</strong></div>
+              <div className="dp-contact"><span>Phone</span><strong className="dp-mono">{psbContact?.phone || "--"}</strong></div>
             </div>
           </div>
         </div>

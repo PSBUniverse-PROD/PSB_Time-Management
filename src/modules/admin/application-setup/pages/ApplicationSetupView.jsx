@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Button, InlineEditCell, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
+import { Button, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
 import {
   parseAppId, isSameId, compareText, buildOrderSignature,
   mapApplicationRow, mapRoleRow, removeObjectKey, mergeUpdatePatch, appendUniqueId,
@@ -163,8 +163,6 @@ function useApplicationSetup({ applications = [], roles = [], initialSelectedApp
   const [dialog, setDialog] = useState(EMPTY_DIALOG);
   const [applicationDraft, setApplicationDraft] = useState({ name: "", desc: "", moduleKey: "", devUrl: "", prodUrl: "" });
   const [roleDraft, setRoleDraft] = useState({ name: "", desc: "" });
-  const [editingAppId, setEditingAppId] = useState(null);
-  const [editingRoleId, setEditingRoleId] = useState(null);
   const [expandedAppId, setExpandedAppId] = useState(null);
   const [usersRole, setUsersRole] = useState(null);
   const batchActiveRef = useRef(false);
@@ -176,7 +174,6 @@ function useApplicationSetup({ applications = [], roles = [], initialSelectedApp
     setIsSavingOrder(false); setIsMutatingAction(false);
     setPendingBatch(createEmptyBatchState()); setDialog(EMPTY_DIALOG);
     setApplicationDraft({ name: "", desc: "", moduleKey: "", devUrl: "", prodUrl: "" }); setRoleDraft({ name: "", desc: "" });
-    setEditingAppId(null); setEditingRoleId(null);
   }, [seedApplications, seedRoles]);
 
   const currentOrderSig = useMemo(() => {
@@ -296,7 +293,6 @@ function useApplicationSetup({ applications = [], roles = [], initialSelectedApp
     setOrderedApplications(seedApplications); setAllRoles(seedRoles);
     setPendingBatch(createEmptyBatchState()); setPersistedOrderSig(buildOrderSignature(seedApplications));
     setDialog(EMPTY_DIALOG); setApplicationDraft({ name: "", desc: "", moduleKey: "", devUrl: "", prodUrl: "" }); setRoleDraft({ name: "", desc: "" });
-    setEditingAppId(null); setEditingRoleId(null);
     updateSelectedApplicationInQuery(seedApplications[0]?.app_id ?? null);
   }, [isMutatingAction, isSavingOrder, seedApplications, seedRoles, updateSelectedApplicationInQuery]);
 
@@ -315,7 +311,7 @@ function useApplicationSetup({ applications = [], roles = [], initialSelectedApp
       toastSuccess(`Saved ${pendingSummary.total} batched change(s).`, "Save Batch");
     } catch (error) {
       toastError(error?.message || "Failed to save batched changes.");
-    } finally { setIsMutatingAction(false); setIsSavingOrder(false); setEditingAppId(null); setEditingRoleId(null); }
+    } finally { setIsMutatingAction(false); setIsSavingOrder(false); }
   }, [currentOrderSig, hasPendingChanges, isMutatingAction, isSavingOrder, orderedApplications, pendingBatch, pendingSummary.total, router, selectedApp?.app_id, updateSelectedApplicationInQuery]);
 
   const closeDialog = useCallback(() => { if (!isMutatingAction) setDialog(EMPTY_DIALOG); }, [isMutatingAction]);
@@ -452,37 +448,12 @@ function useApplicationSetup({ applications = [], roles = [], initialSelectedApp
 
   const roleActions = useRoleActions({ isSavingOrder, isMutatingAction, isSelectedAppPendingDeactivation, selectedApp, dialog, roleDraft, pendingDeactivatedRoleIds, setAllRoles, setPendingBatch, setDialog, setRoleDraft });
 
-  const startEditingApp = useCallback((row) => { if (isSavingOrder || isMutatingAction) return; const id = String(row?.app_id ?? ""); setEditingAppId((prev) => prev === id ? null : id); }, [isMutatingAction, isSavingOrder]);
-  const stopEditingApp = useCallback(() => { setEditingAppId(null); }, []);
-  const startEditingRole = useCallback((row) => { if (isSavingOrder || isMutatingAction) return; const id = String(row?.role_id ?? ""); setEditingRoleId((prev) => prev === id ? null : id); }, [isMutatingAction, isSavingOrder]);
-  const stopEditingRole = useCallback(() => { setEditingRoleId(null); }, []);
-
   const openRoleUsers = useCallback((row) => {
     if (isSavingOrder || isMutatingAction) return;
     if (!row?.role_id || isTempRoleId(row.role_id)) { toastError("Save the role before assigning users."); return; }
     setUsersRole(row);
   }, [isMutatingAction, isSavingOrder]);
   const closeRoleUsers = useCallback(() => { setUsersRole(null); }, []);
-
-  const handleInlineEditApplication = useCallback((row, key, value) => {
-    const appId = row?.app_id;
-    if (!appId || isSavingOrder || isMutatingAction) return;
-    setOrderedApplications((prev) => prev.map((a, i) => isSameId(a?.app_id, appId) ? mapApplicationRow({ ...a, [key]: value || null }, i) : a));
-    setPendingBatch((prev) => {
-      if (isTempApplicationId(appId)) return { ...prev, appCreates: prev.appCreates.map((e) => isSameId(e?.tempId, appId) ? { ...e, payload: { ...e.payload, [key]: value || null } } : e) };
-      return { ...prev, appUpdates: { ...prev.appUpdates, [String(appId)]: mergeUpdatePatch(prev.appUpdates?.[String(appId)], { [key]: value || null }) } };
-    });
-  }, [isMutatingAction, isSavingOrder]);
-
-  const handleInlineEditRole = useCallback((row, key, value) => {
-    const roleId = row?.role_id;
-    if (!roleId || isSavingOrder || isMutatingAction) return;
-    setAllRoles((prev) => prev.map((r, i) => isSameId(r?.role_id, roleId) ? mapRoleRow({ ...r, [key]: value || null }, i) : r));
-    setPendingBatch((prev) => {
-      if (isTempRoleId(roleId)) return { ...prev, roleCreates: prev.roleCreates.map((e) => isSameId(e?.tempId, roleId) ? { ...e, payload: { ...e.payload, [key]: value || null } } : e) };
-      return { ...prev, roleUpdates: { ...prev.roleUpdates, [String(roleId)]: mergeUpdatePatch(prev.roleUpdates?.[String(roleId)], { [key]: value || null }) } };
-    });
-  }, [isMutatingAction, isSavingOrder]);
 
   return {
     decoratedApplications, decoratedSelectedAppRoles, dialog, applicationDraft, roleDraft,
@@ -494,8 +465,6 @@ function useApplicationSetup({ applications = [], roles = [], initialSelectedApp
     closeDialog, openEditApplicationDialog, openToggleApplicationDialog, openDeactivateApplicationDialog,
     stageHardDeleteApplication, unstageHardDeleteApplication, openAddApplicationDialog,
     submitAddApplication, submitEditApplication, submitToggleApplication, submitDeactivateApplication,
-    handleInlineEditApplication, handleInlineEditRole,
-    editingAppId, startEditingApp, stopEditingApp, editingRoleId, startEditingRole, stopEditingRole,
     usersRole, openRoleUsers, closeRoleUsers,
     ...roleActions,
   };
@@ -543,68 +512,53 @@ function ApplicationTable({
   decoratedApplications, decoratedSelectedAppRoles, selectedApp, expandedAppId, isSavingOrder, isMutatingAction,
   pendingDeactivatedAppIds, pendingDeactivatedRoleIds,
   handleApplicationRowClick, handleApplicationReorder,
-  editingAppId, onStopEditing, onInlineEdit, openEditApplicationDialog,
+  // Rows open/close on click, so editing happens in the Edit Application / Edit Role windows, never inline.
+  openEditApplicationDialog,
   openToggleApplicationDialog, openDeactivateApplicationDialog, stageHardDeleteApplication, onUndoBatchAction,
   openAddRoleDialog,
   // role props
-  editingRoleId, onStartEditingRole, onStopEditingRole, onInlineEditRole,
+  openEditRoleDialog,
   openToggleRoleDialog, openDeactivateRoleDialog, stageHardDeleteRole, onUndoBatchActionRole,
   openRoleUsers,
 }) {
   const columns = useMemo(() => [
     { key: "app_id", label: "App ID", width: "7%", sortable: true, render: (row) => <span className="text-muted small">{row?.app_id ?? "--"}</span> },
     { key: "app_name", label: "Application Name", width: "17%", sortable: true, render: (row) => {
-      const m = batchMarker(row?.__batchState || ""); const isEditing = String(row?.app_id ?? "") === String(editingAppId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction; const isSelected = isSameId(row?.app_id, selectedApp?.app_id);
-      return (<span className={isSelected ? "fw-semibold text-primary" : ""}><InlineEditCell value={row?.app_name || ""} onCommit={(val) => onInlineEdit?.(row, "app_name", val)} onCancel={onStopEditing} disabled={editDisabled} />{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
+      const m = batchMarker(row?.__batchState || ""); const isSelected = isSameId(row?.app_id, selectedApp?.app_id);
+      return (<span className={isSelected ? "fw-semibold text-primary" : ""}>{row?.app_name || ""}{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
     }},
-    { key: "module_key", label: "Module Key", width: "12%", sortable: true, render: (row) => {
-      const isEditing = String(row?.app_id ?? "") === String(editingAppId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return <InlineEditCell value={row?.module_key || ""} onCommit={(val) => onInlineEdit?.(row, "module_key", val)} onCancel={onStopEditing} disabled={editDisabled} />;
-    }},
-    { key: "app_desc", label: "Description", width: "16%", sortable: true, render: (row) => {
-      const isEditing = String(row?.app_id ?? "") === String(editingAppId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return <InlineEditCell value={row?.app_desc || ""} onCommit={(val) => onInlineEdit?.(row, "app_desc", val)} onCancel={onStopEditing} disabled={editDisabled} />;
-    }},
-    { key: "dev_url", label: "Dev URL", width: "16%", sortable: true, render: (row) => {
-      const isEditing = String(row?.app_id ?? "") === String(editingAppId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return <InlineEditCell value={row?.dev_url || ""} onCommit={(val) => onInlineEdit?.(row, "dev_url", val)} onCancel={onStopEditing} disabled={editDisabled} />;
-    }},
-    { key: "prod_url", label: "Prod URL", width: "16%", sortable: true, render: (row) => {
-      const isEditing = String(row?.app_id ?? "") === String(editingAppId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return <InlineEditCell value={row?.prod_url || ""} onCommit={(val) => onInlineEdit?.(row, "prod_url", val)} onCancel={onStopEditing} disabled={editDisabled} />;
-    }},
+    { key: "module_key", label: "Module Key", width: "12%", sortable: true, render: (row) => row?.module_key || "" },
+    { key: "app_desc", label: "Description", width: "16%", sortable: true, render: (row) => row?.app_desc || "" },
+    { key: "dev_url", label: "Dev URL", width: "16%", sortable: true, render: (row) => row?.dev_url || "" },
+    { key: "prod_url", label: "Prod URL", width: "16%", sortable: true, render: (row) => row?.prod_url || "" },
     { key: "is_active_bool", label: "Active", width: "8%", sortable: true, align: "center", render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} /> },
-  ], [editingAppId, isMutatingAction, isSavingOrder, onInlineEdit, onStopEditing, selectedApp?.app_id]);
+  ], [selectedApp?.app_id]);
 
   const actions = useMemo(() => [
-    { key: "edit-application", label: "Edit", type: "secondary", icon: "pen", visible: (r) => String(r?.app_id ?? "") !== String(editingAppId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openEditApplicationDialog(r) },
-    { key: "add-role", label: "+ Add Role", type: "success", icon: "plus", visible: (r) => String(r?.app_id ?? "") !== String(editingAppId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: () => openAddRoleDialog() },
-    { key: "restore-application", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => (!Boolean(r?.is_active_bool) || pendingDeactivatedAppIds.has(String(r?.app_id ?? ""))) && String(r?.app_id ?? "") !== String(editingAppId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openToggleApplicationDialog(r) },
-    { key: "deactivate-application", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedAppIds.has(String(r?.app_id ?? "")) && String(r?.app_id ?? "") !== String(editingAppId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openDeactivateApplicationDialog(r) },
-    { key: "delete-application", label: "Delete", type: "danger", icon: "trash", visible: (r) => String(r?.app_id ?? "") !== String(editingAppId ?? ""), confirm: true, confirmMessage: (r) => `Permanently delete ${r?.app_name || "this application"}? This action cannot be undone.`, disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => stageHardDeleteApplication(r) },
-  ], [editingAppId, isMutatingAction, isSavingOrder, openAddRoleDialog, openDeactivateApplicationDialog, openEditApplicationDialog, openToggleApplicationDialog, pendingDeactivatedAppIds, stageHardDeleteApplication]);
+    { key: "edit-application", label: "Edit", type: "secondary", icon: "pen", disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openEditApplicationDialog(r) },
+    { key: "add-role", label: "+ Add Role", type: "success", icon: "plus", disabled: () => isSavingOrder || isMutatingAction, onClick: () => openAddRoleDialog() },
+    { key: "restore-application", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedAppIds.has(String(r?.app_id ?? "")), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openToggleApplicationDialog(r) },
+    { key: "deactivate-application", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedAppIds.has(String(r?.app_id ?? "")), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openDeactivateApplicationDialog(r) },
+    { key: "delete-application", label: "Delete", type: "danger", icon: "trash", confirm: true, confirmMessage: (r) => `Permanently delete ${r?.app_name || "this application"}? This action cannot be undone.`, disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => stageHardDeleteApplication(r) },
+  ], [isMutatingAction, isSavingOrder, openAddRoleDialog, openDeactivateApplicationDialog, openEditApplicationDialog, openToggleApplicationDialog, pendingDeactivatedAppIds, stageHardDeleteApplication]);
 
   // ── Role columns for nested detail ──
   const roleColumns = useMemo(() => [
     { key: "role_name", label: "Role Name", width: "30%", sortable: true, render: (row) => {
-      const m = batchMarker(row?.__batchState || ""); const isEditing = String(row?.role_id ?? "") === String(editingRoleId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return (<span><InlineEditCell value={row?.role_name || ""} onCommit={(val) => onInlineEditRole?.(row, "role_name", val)} onCancel={onStopEditingRole} disabled={editDisabled} />{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
+      const m = batchMarker(row?.__batchState || "");
+      return (<span>{row?.role_name || ""}{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
     }},
-    { key: "role_desc", label: "Description", width: "44%", sortable: true, render: (row) => {
-      const isEditing = String(row?.role_id ?? "") === String(editingRoleId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return <InlineEditCell value={row?.role_desc || ""} onCommit={(val) => onInlineEditRole?.(row, "role_desc", val)} onCancel={onStopEditingRole} disabled={editDisabled} />;
-    }},
+    { key: "role_desc", label: "Description", width: "44%", sortable: true, render: (row) => row?.role_desc || "" },
     { key: "is_active_bool", label: "Active", width: "16%", sortable: true, align: "center", render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} /> },
-  ], [editingRoleId, isMutatingAction, isSavingOrder, onInlineEditRole, onStopEditingRole]);
+  ], []);
 
   const roleActions = useMemo(() => [
-    { key: "edit-role", label: "Edit", type: "secondary", icon: "pen", visible: (r) => String(r?.role_id ?? "") !== String(editingRoleId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => onStartEditingRole(r) },
-    { key: "cancel-edit-role", label: "Cancel", type: "secondary", icon: "xmark", visible: (r) => String(r?.role_id ?? "") === String(editingRoleId ?? ""), onClick: () => onStopEditingRole() },
-    { key: "role-users", label: "Users", type: "secondary", icon: "users", visible: (r) => String(r?.role_id ?? "") !== String(editingRoleId ?? ""), disabled: (r) => isSavingOrder || isMutatingAction || isTempRoleId(r?.role_id), onClick: (r) => openRoleUsers(r) },
-    { key: "restore-role", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => (!Boolean(r?.is_active_bool) || pendingDeactivatedRoleIds.has(String(r?.role_id ?? ""))) && String(r?.role_id ?? "") !== String(editingRoleId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openToggleRoleDialog(r) },
-    { key: "deactivate-role", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedRoleIds.has(String(r?.role_id ?? "")) && String(r?.role_id ?? "") !== String(editingRoleId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openDeactivateRoleDialog(r) },
-    { key: "delete-role", label: "Delete", type: "danger", icon: "trash", visible: (r) => String(r?.role_id ?? "") !== String(editingRoleId ?? ""), confirm: true, confirmMessage: (r) => `Permanently delete ${r?.role_name || "this role"}? This action cannot be undone.`, disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => stageHardDeleteRole(r) },
-  ], [editingRoleId, isMutatingAction, isSavingOrder, onStartEditingRole, onStopEditingRole, openDeactivateRoleDialog, openRoleUsers, openToggleRoleDialog, pendingDeactivatedRoleIds, stageHardDeleteRole]);
+    { key: "edit-role", label: "Edit", type: "secondary", icon: "pen", disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openEditRoleDialog(r) },
+    { key: "role-users", label: "Users", type: "secondary", icon: "users", disabled: (r) => isSavingOrder || isMutatingAction || isTempRoleId(r?.role_id), onClick: (r) => openRoleUsers(r) },
+    { key: "restore-role", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedRoleIds.has(String(r?.role_id ?? "")), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openToggleRoleDialog(r) },
+    { key: "deactivate-role", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedRoleIds.has(String(r?.role_id ?? "")), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openDeactivateRoleDialog(r) },
+    { key: "delete-role", label: "Delete", type: "danger", icon: "trash", confirm: true, confirmMessage: (r) => `Permanently delete ${r?.role_name || "this role"}? This action cannot be undone.`, disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => stageHardDeleteRole(r) },
+  ], [isMutatingAction, isSavingOrder, openDeactivateRoleDialog, openEditRoleDialog, openRoleUsers, openToggleRoleDialog, pendingDeactivatedRoleIds, stageHardDeleteRole]);
 
   const renderAppDetail = useCallback(() => {
     if (!selectedApp) return null;
@@ -694,13 +648,11 @@ export default function ApplicationSetupView({ applications, roles, initialSelec
         isSavingOrder={h.isSavingOrder} isMutatingAction={h.isMutatingAction}
         pendingDeactivatedAppIds={h.pendingDeactivatedAppIds} pendingDeactivatedRoleIds={h.pendingDeactivatedRoleIds}
         handleApplicationRowClick={h.handleApplicationRowClick} handleApplicationReorder={h.handleApplicationReorder}
-        editingAppId={h.editingAppId} onStopEditing={h.stopEditingApp} openEditApplicationDialog={h.openEditApplicationDialog}
-        onInlineEdit={h.handleInlineEditApplication}
+        openEditApplicationDialog={h.openEditApplicationDialog}
         openToggleApplicationDialog={h.openToggleApplicationDialog} openDeactivateApplicationDialog={h.openDeactivateApplicationDialog}
         stageHardDeleteApplication={h.stageHardDeleteApplication} onUndoBatchAction={h.unstageHardDeleteApplication}
         openAddRoleDialog={h.openAddRoleDialog}
-        editingRoleId={h.editingRoleId} onStartEditingRole={h.startEditingRole} onStopEditingRole={h.stopEditingRole}
-        onInlineEditRole={h.handleInlineEditRole}
+        openEditRoleDialog={h.openEditRoleDialog}
         openToggleRoleDialog={h.openToggleRoleDialog} openDeactivateRoleDialog={h.openDeactivateRoleDialog}
         stageHardDeleteRole={h.stageHardDeleteRole} onUndoBatchActionRole={h.unstageHardDeleteRole}
         openRoleUsers={h.openRoleUsers}

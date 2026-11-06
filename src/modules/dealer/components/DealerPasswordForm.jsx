@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { toastError, toastSuccess } from "@/shared/components/ui";
+import { toastSuccess } from "@/shared/components/ui";
 import { changeDealerPasswordAction } from "../data/dealerPortal.actions";
+import { errorFromResult, showDealerError } from "../data/dealerErrorReport";
 
 const TITLE = "Change password";
 const MIN_LENGTH = 8;
@@ -25,7 +26,7 @@ export default function DealerPasswordForm() {
     try {
       const result = await changeDealerPasswordAction({ currentPassword, newPassword });
       if (!result?.success) {
-        toastError(result?.error || "Unable to update your password.", TITLE);
+        showDealerError(errorFromResult(result, "Unable to update your password."), { title: TITLE, action: "Changing the password" });
         return;
       }
       toastSuccess("Your password has been updated.", TITLE);
@@ -33,7 +34,7 @@ export default function DealerPasswordForm() {
       setNewPassword("");
       setConfirmPassword("");
     } catch {
-      toastError("Unable to update your password. Please try again.", TITLE);
+      showDealerError(new Error("Unable to update your password. Please try again."), { title: TITLE, action: "Changing the password" });
     } finally {
       setSaving(false);
     }

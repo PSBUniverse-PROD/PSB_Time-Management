@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import DealerAccountWorkspace from "../components/DealerAccountWorkspace";
 import { loadDealerAccountData } from "../data/dealerPortal.actions";
-import { loadUsStatesAction } from "@/modules/admin/dealer-master-setup/data/dealerMasterSetup.actions.js";
+import { loadUsStatesAction } from "../data/usAddress.actions";
 import { DEALER_LOCK_MINUTES, DEALER_MAX_FAILED_ATTEMPTS } from "@/core/dealer/dealerAuth";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +39,7 @@ export default async function DealerAccountPage() {
     <DealerAccountWorkspace
       dealer={data.dealer}
       username={data.username}
+      staff={data.staff}
       states={states}
       creditLimitText={formatMoney(data.dealer.credit_limit)}
       dealerSinceText={formatDate(data.dealer.created_at)}
@@ -47,6 +48,7 @@ export default async function DealerAccountPage() {
       lockMinutes={DEALER_LOCK_MINUTES}
       files={data.files}
       projects={data.projects}
+      psbContact={data.psbContact}
     />
   );
 }

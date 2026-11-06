@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 ﻿{
+=======
+{
+>>>>>>> core-main
     "code-runner.runInTerminal":  true,
     "code-runner.clearPreviousOutput":  true,
     "code-runner.preserveFocus":  false,
@@ -22,6 +26,11 @@
                               },
     "files.readonlyExclude":  {
                                   "**/.env*":  true,
+<<<<<<< HEAD
                                   "**/src/modules/time-tracker/**":  true
+=======
+                                  "**/src/modules/dealer/**":  true,
+                                  "**/src/modules/project-map/**":  true
+>>>>>>> core-main
                               }
 }

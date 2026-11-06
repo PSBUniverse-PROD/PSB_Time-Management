@@ -33,7 +33,8 @@ function getDealerSecretKey() {
 export function normalizeDealerUsername(value) {
   const username = String(value ?? "").trim().toLowerCase();
   if (!/^[a-z0-9._-]{3,50}$/.test(username)) {
-    throw new Error("Username must be 3–50 characters: letters, numbers, dot, dash or underscore.");
+    // `expected`: the user can fix this, so it is shown as a short message, not an error report.
+    throw Object.assign(new Error("Username must be 3–50 characters: letters, numbers, dot, dash or underscore."), { expected: true });
   }
   return username;
 }
@@ -41,10 +42,10 @@ export function normalizeDealerUsername(value) {
 export function validateDealerPassword(value) {
   const password = String(value ?? "");
   if (password.length < PASSWORD_MIN_LENGTH) {
-    throw new Error(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
+    throw Object.assign(new Error(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`), { expected: true });
   }
   if (password.length > PASSWORD_MAX_LENGTH) {
-    throw new Error(`Password must be at most ${PASSWORD_MAX_LENGTH} characters.`);
+    throw Object.assign(new Error(`Password must be at most ${PASSWORD_MAX_LENGTH} characters.`), { expected: true });
   }
   return password;
 }
@@ -58,8 +59,14 @@ export async function verifyDealerPassword(password, passwordHash) {
   return bcrypt.compare(String(password ?? ""), passwordHash);
 }
 
-export async function createDealerSessionToken({ dealerId, accountId, username }) {
-  return new SignJWT({ dealerId, accountId, username })
+/**
+ * `staff` is set only by "Login as dealer": { userId, name } of the PSB staff
+ * member viewing the account. A dealer's own sign-in never has it.
+ */
+export async function createDealerSessionToken({ dealerId, accountId, username, staff = null }) {
+  const claims = { dealerId, accountId, username };
+  if (staff?.userId) claims.staff = { userId: staff.userId, name: String(staff.name || "") };
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
     .setAudience(DEALER_SESSION_AUDIENCE)
     .setIssuedAt()
@@ -67,13 +74,18 @@ export async function createDealerSessionToken({ dealerId, accountId, username }
     .sign(getDealerSecretKey());
 }
 
-/** Returns { dealerId, accountId, username } or null when the token is missing, invalid or expired. */
+/**
+ * Returns { dealerId, accountId, username, staff } or null when the token is
+ * missing, invalid or expired. `staff` is { userId, name } in a "Login as
+ * dealer" session, otherwise null.
+ */
 export async function verifyDealerSessionToken(token) {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getDealerSecretKey(), { audience: DEALER_SESSION_AUDIENCE });
     if (!payload?.dealerId) return null;
-    return { dealerId: payload.dealerId, accountId: payload.accountId, username: payload.username };
+    const staff = payload.staff?.userId ? { userId: payload.staff.userId, name: String(payload.staff.name || "") } : null;
+    return { dealerId: payload.dealerId, accountId: payload.accountId, username: payload.username, staff };
   } catch {
     return null;
   }

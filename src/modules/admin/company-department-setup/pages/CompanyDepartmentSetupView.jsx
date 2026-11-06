@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Button, InlineEditCell, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
+import { Button, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
 import {
   parseCompanyId, isSameId, compareText, normalizeText, mapCompanyRow, mapDepartmentRow,
   removeObjectKey, mergeUpdatePatch, appendUniqueId,
@@ -430,8 +430,6 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
   const [dialog, setDialog] = useState(EMPTY_DIALOG);
   const [companyDraft, setCompanyDraft] = useState({ name: "", shortName: "", email: "", phone: "" });
   const [departmentDraft, setDepartmentDraft] = useState({ name: "", shortName: "" });
-  const [editingCompanyId, setEditingCompanyId] = useState(null);
-  const [editingDeptId, setEditingDeptId] = useState(null);
   const [expandedCompanyId, setExpandedCompanyId] = useState(null);
   const batchActiveRef = useRef(false);
 
@@ -448,7 +446,6 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
     setCompanyChanges(createEmptyCompanyChanges()); setDepartmentChanges(createEmptyDepartmentChanges());
     setDialog(EMPTY_DIALOG); setCompanyDraft({ name: "", shortName: "", email: "", phone: "" }); setDepartmentDraft({ name: "", shortName: "" });
     setIsMutatingAction(false); setIsSaving(false);
-    setEditingCompanyId(null); setEditingDeptId(null);
     const qId = parseCompanyId(searchParams?.get("company"));
     setSelectedCompanyId(qId ?? initialSelectedCompanyId ?? seedCompanies[0]?.comp_id ?? null);
   }, [initialSelectedCompanyId, searchParams, seedCompanies, seedDepartments]);
@@ -558,7 +555,6 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
     setOrderedCompanies(seedCompanies); setAllDepartments(seedDepartments);
     setCompanyChanges(createEmptyCompanyChanges()); setDepartmentChanges(createEmptyDepartmentChanges());
     setDialog(EMPTY_DIALOG); setCompanyDraft({ name: "", shortName: "", email: "", phone: "" }); setDepartmentDraft({ name: "", shortName: "" });
-    setEditingCompanyId(null); setEditingDeptId(null);
     updateSelectedCompanyInQuery(seedCompanies[0]?.comp_id ?? null);
     toastSuccess("Batch changes canceled.", "Batching");
   }, [hasPendingChanges, isMutatingAction, isSaving, seedCompanies, seedDepartments, updateSelectedCompanyInQuery]);
@@ -577,7 +573,7 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
       toastSuccess(`Saved ${pendingSummary.total} batched change(s).`, "Save Batch");
     } catch (error) {
       toastError(error?.message || "Failed to save batched changes.");
-    } finally { setIsMutatingAction(false); setIsSaving(false); setEditingCompanyId(null); setEditingDeptId(null); }
+    } finally { setIsMutatingAction(false); setIsSaving(false); }
   }, [companyChanges, departmentChanges, hasPendingChanges, isMutatingAction, isSaving,
     orderedCompanies, pendingSummary.total, router, selectedCompany?.comp_id, updateSelectedCompanyInQuery]);
 
@@ -594,76 +590,6 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
     setAllDepartments, setDepartmentChanges, setDialog, setDepartmentDraft,
   });
 
-  const startEditingCompany = useCallback((row) => {
-    if (isSaving || isMutatingAction) return;
-    const id = String(row?.comp_id ?? "");
-    setEditingCompanyId((prev) => prev === id ? null : id);
-  }, [isMutatingAction, isSaving]);
-
-  const stopEditingCompany = useCallback(() => { setEditingCompanyId(null); }, []);
-
-  const startEditingDept = useCallback((row) => {
-    if (isSaving || isMutatingAction) return;
-    const id = String(row?.dept_id ?? "");
-    setEditingDeptId((prev) => prev === id ? null : id);
-  }, [isMutatingAction, isSaving]);
-
-  const stopEditingDept = useCallback(() => { setEditingDeptId(null); }, []);
-
-  const handleInlineEditCompany = useCallback((row, key, value) => {
-    const compId = row?.comp_id;
-    if (!compId || isSaving || isMutatingAction) return;
-
-    setOrderedCompanies((prev) =>
-      prev.map((c, i) => isSameId(c?.comp_id, compId)
-        ? mapCompanyRow({ ...c, [key]: value || null }, i) : c),
-    );
-
-    setCompanyChanges((prev) => {
-      if (isTempCompanyId(compId)) {
-        return {
-          ...prev,
-          creates: prev.creates.map((e) => isSameId(e?.tempId, compId)
-            ? { ...e, payload: { ...e.payload, [key]: value || null } } : e),
-        };
-      }
-      return {
-        ...prev,
-        updates: {
-          ...prev.updates,
-          [String(compId)]: mergeUpdatePatch(prev.updates?.[String(compId)], { [key]: value || null }),
-        },
-      };
-    });
-  }, [isMutatingAction, isSaving]);
-
-  const handleInlineEditDepartment = useCallback((row, key, value) => {
-    const deptId = row?.dept_id;
-    if (!deptId || isSaving || isMutatingAction) return;
-
-    setAllDepartments((prev) =>
-      prev.map((d, i) => isSameId(d?.dept_id, deptId)
-        ? mapDepartmentRow({ ...d, [key]: value || null }, i) : d),
-    );
-
-    setDepartmentChanges((prev) => {
-      if (isTempDepartmentId(deptId)) {
-        return {
-          ...prev,
-          creates: prev.creates.map((e) => isSameId(e?.tempId, deptId)
-            ? { ...e, payload: { ...e.payload, [key]: value || null } } : e),
-        };
-      }
-      return {
-        ...prev,
-        updates: {
-          ...prev.updates,
-          [String(deptId)]: mergeUpdatePatch(prev.updates?.[String(deptId)], { [key]: value || null }),
-        },
-      };
-    });
-  }, [isMutatingAction, isSaving]);
-
   return {
     decoratedCompanies, decoratedDepartments,
     dialog, companyDraft, departmentDraft, isSaving, isMutatingAction,
@@ -673,9 +599,6 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
     selectedCompany, isSelectedCompanyPendingDeactivation, expandedCompanyId,
     setDialog, setCompanyDraft, setDepartmentDraft,
     handleCompanyRowClick, handleCancelBatch, handleSaveBatch, closeDialog,
-    handleInlineEditCompany, handleInlineEditDepartment,
-    editingCompanyId, startEditingCompany, stopEditingCompany,
-    editingDeptId, startEditingDept, stopEditingDept,
     ...companyActions, ...deptActions,
   };
 }
@@ -739,12 +662,13 @@ function CompanyDeptHeader({
 function CompanyTableSection({
   decoratedCompanies, decoratedDepartments, selectedCompany, expandedCompanyId, isSaving, isMutatingAction,
   pendingDeactivatedCompanyIds, pendingHardDeletedCompanyIds, handleCompanyRowClick,
-  editingCompanyId, onStartEditing, onStopEditing, onInlineEdit,
+  // Rows open/close on click, so editing happens in the Edit Company / Edit Department windows, never inline.
+  openEditCompanyDialog,
   openToggleCompanyDialog, openDeactivateCompanyDialog, stageHardDeleteCompany, onUndoBatchAction,
   openAddDepartmentDialog,
   // department props
   pendingDeactivatedDepartmentIds, pendingHardDeletedDepartmentIds,
-  editingDeptId, onStartEditingDept, onStopEditingDept, onInlineEditDept,
+  openEditDepartmentDialog,
   openToggleDepartmentDialog, openDeactivateDepartmentDialog, stageHardDeleteDepartment, onUndoBatchActionDept,
 }) {
   const columns = useMemo(() => [
@@ -752,101 +676,46 @@ function CompanyTableSection({
       key: "comp_name", label: "Company Name", width: "26%", sortable: true,
       render: (row) => {
         const m = batchMarker(row?.__batchState || "");
-        const isEditing = String(row?.comp_id ?? "") === String(editingCompanyId ?? "");
-        const editDisabled = !isEditing || isSaving || isMutatingAction;
         const isSelected = isSameId(row?.comp_id, selectedCompany?.comp_id);
         return (
           <span className={isSelected ? "fw-semibold text-primary" : ""}>
-            <InlineEditCell
-              value={row?.comp_name || ""}
-              onCommit={(val) => onInlineEdit?.(row, "comp_name", val)}
-              onCancel={onStopEditing}
-              disabled={editDisabled}
-            />
+            {row?.comp_name || ""}
             {m.t ? <span className={m.c}>{m.t}</span> : null}
           </span>
         );
       },
     },
-    {
-      key: "comp_short_name", label: "Short Name", width: "18%", sortable: true,
-      render: (row) => {
-        const isEditing = String(row?.comp_id ?? "") === String(editingCompanyId ?? "");
-        const editDisabled = !isEditing || isSaving || isMutatingAction;
-        return (
-          <InlineEditCell
-            value={row?.comp_short_name || ""}
-            onCommit={(val) => onInlineEdit?.(row, "comp_short_name", val)}
-            onCancel={onStopEditing}
-            disabled={editDisabled}
-          />
-        );
-      },
-    },
-    {
-      key: "comp_email", label: "Email", width: "26%", sortable: true,
-      render: (row) => {
-        const isEditing = String(row?.comp_id ?? "") === String(editingCompanyId ?? "");
-        const editDisabled = !isEditing || isSaving || isMutatingAction;
-        return (
-          <InlineEditCell
-            value={row?.comp_email || ""}
-            onCommit={(val) => onInlineEdit?.(row, "comp_email", val)}
-            onCancel={onStopEditing}
-            disabled={editDisabled}
-          />
-        );
-      },
-    },
-    {
-      key: "comp_phone", label: "Phone", width: "18%", sortable: true,
-      render: (row) => {
-        const isEditing = String(row?.comp_id ?? "") === String(editingCompanyId ?? "");
-        const editDisabled = !isEditing || isSaving || isMutatingAction;
-        return (
-          <InlineEditCell
-            value={row?.comp_phone || ""}
-            onCommit={(val) => onInlineEdit?.(row, "comp_phone", val)}
-            onCancel={onStopEditing}
-            disabled={editDisabled}
-          />
-        );
-      },
-    },
+    { key: "comp_short_name", label: "Short Name", width: "18%", sortable: true, render: (row) => row?.comp_short_name || "" },
+    { key: "comp_email", label: "Email", width: "26%", sortable: true, render: (row) => row?.comp_email || "" },
+    { key: "comp_phone", label: "Phone", width: "18%", sortable: true, render: (row) => row?.comp_phone || "" },
     {
       key: "is_active_bool", label: "Active", width: "12%", sortable: true, align: "center",
       render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} />,
     },
-  ], [editingCompanyId, isMutatingAction, isSaving, onInlineEdit, onStopEditing, selectedCompany?.comp_id]);
+  ], [selectedCompany?.comp_id]);
 
   const actions = useMemo(() => [
     { key: "edit-company", label: "Edit", type: "secondary", icon: "pen",
-      visible: (r) => String(r?.comp_id ?? "") !== String(editingCompanyId ?? ""),
       disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => onStartEditing(r) },
-    { key: "cancel-edit-company", label: "Cancel", type: "secondary", icon: "xmark",
-      visible: (r) => String(r?.comp_id ?? "") === String(editingCompanyId ?? ""),
-      onClick: () => onStopEditing() },
+      onClick: (r) => openEditCompanyDialog(r) },
     { key: "restore-company", label: "Restore", type: "secondary", icon: "rotate-left",
-      visible: (r) => (!Boolean(r?.is_active_bool) || pendingDeactivatedCompanyIds.has(String(r?.comp_id ?? ""))) && String(r?.comp_id ?? "") !== String(editingCompanyId ?? ""),
+      visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedCompanyIds.has(String(r?.comp_id ?? "")),
       disabled: (r) => isSaving || isMutatingAction,
       onClick: (r) => openToggleCompanyDialog(r) },
     { key: "deactivate-company", label: "Deactivate", type: "secondary", icon: "ban",
-      visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedCompanyIds.has(String(r?.comp_id ?? "")) && String(r?.comp_id ?? "") !== String(editingCompanyId ?? ""),
+      visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedCompanyIds.has(String(r?.comp_id ?? "")),
       disabled: (r) => isSaving || isMutatingAction,
       onClick: (r) => openDeactivateCompanyDialog(r) },
     { key: "delete-company", label: "Delete", type: "danger", icon: "trash",
-      visible: (r) => String(r?.comp_id ?? "") !== String(editingCompanyId ?? ""),
       confirm: true,
       confirmMessage: (r) => `Permanently delete ${r?.comp_name || "this company"}? This action cannot be undone.`,
       disabled: (r) => isSaving || isMutatingAction,
       onClick: (r) => stageHardDeleteCompany(r) },
     { key: "add-department", label: "+ Add Dept", type: "success", icon: "plus",
-      visible: (r) => String(r?.comp_id ?? "") !== String(editingCompanyId ?? ""),
       disabled: (r) => isSaving || isMutatingAction,
       onClick: () => openAddDepartmentDialog() },
-  ], [editingCompanyId, isMutatingAction, isSaving, onStartEditing, onStopEditing,
-    openAddDepartmentDialog, openDeactivateCompanyDialog, openToggleCompanyDialog, pendingDeactivatedCompanyIds, stageHardDeleteCompany]);
+  ], [isMutatingAction, isSaving, openAddDepartmentDialog, openDeactivateCompanyDialog, openEditCompanyDialog,
+    openToggleCompanyDialog, pendingDeactivatedCompanyIds, stageHardDeleteCompany]);
 
   // ── Department columns for nested detail ──
   const deptColumns = useMemo(() => [
@@ -854,66 +723,40 @@ function CompanyTableSection({
       key: "dept_name", label: "Department Name", width: "48%", sortable: true,
       render: (row) => {
         const m = batchMarker(row?.__batchState || "");
-        const isEditing = String(row?.dept_id ?? "") === String(editingDeptId ?? "");
-        const editDisabled = !isEditing || isSaving || isMutatingAction;
         return (
           <span>
-            <InlineEditCell
-              value={row?.dept_name || ""}
-              onCommit={(val) => onInlineEditDept?.(row, "dept_name", val)}
-              onCancel={onStopEditingDept}
-              disabled={editDisabled}
-            />
+            {row?.dept_name || ""}
             {m.t ? <span className={m.c}>{m.t}</span> : null}
           </span>
         );
       },
     },
-    {
-      key: "dept_short_name", label: "Short Name", width: "30%", sortable: true,
-      render: (row) => {
-        const isEditing = String(row?.dept_id ?? "") === String(editingDeptId ?? "");
-        const editDisabled = !isEditing || isSaving || isMutatingAction;
-        return (
-          <InlineEditCell
-            value={row?.dept_short_name || ""}
-            onCommit={(val) => onInlineEditDept?.(row, "dept_short_name", val)}
-            onCancel={onStopEditingDept}
-            disabled={editDisabled}
-          />
-        );
-      },
-    },
+    { key: "dept_short_name", label: "Short Name", width: "30%", sortable: true, render: (row) => row?.dept_short_name || "" },
     {
       key: "is_active_bool", label: "Active", width: "22%", sortable: true, align: "center",
       render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} />,
     },
-  ], [editingDeptId, isMutatingAction, isSaving, onInlineEditDept, onStopEditingDept]);
+  ], []);
 
   const deptActions = useMemo(() => [
     { key: "edit-department", label: "Edit", type: "secondary", icon: "pen",
-      visible: (r) => String(r?.dept_id ?? "") !== String(editingDeptId ?? ""),
       disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => onStartEditingDept(r) },
-    { key: "cancel-edit-department", label: "Cancel", type: "secondary", icon: "xmark",
-      visible: (r) => String(r?.dept_id ?? "") === String(editingDeptId ?? ""),
-      onClick: () => onStopEditingDept() },
+      onClick: (r) => openEditDepartmentDialog(r) },
     { key: "restore-department", label: "Restore", type: "secondary", icon: "rotate-left",
-      visible: (r) => (!Boolean(r?.is_active_bool) || pendingDeactivatedDepartmentIds.has(String(r?.dept_id ?? ""))) && String(r?.dept_id ?? "") !== String(editingDeptId ?? ""),
+      visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedDepartmentIds.has(String(r?.dept_id ?? "")),
       disabled: (r) => isSaving || isMutatingAction,
       onClick: (r) => openToggleDepartmentDialog(r) },
     { key: "deactivate-department", label: "Deactivate", type: "secondary", icon: "ban",
-      visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedDepartmentIds.has(String(r?.dept_id ?? "")) && String(r?.dept_id ?? "") !== String(editingDeptId ?? ""),
+      visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedDepartmentIds.has(String(r?.dept_id ?? "")),
       disabled: (r) => isSaving || isMutatingAction,
       onClick: (r) => openDeactivateDepartmentDialog(r) },
     { key: "delete-department", label: "Delete", type: "danger", icon: "trash",
-      visible: (r) => String(r?.dept_id ?? "") !== String(editingDeptId ?? ""),
       confirm: true,
       confirmMessage: (r) => `Permanently delete ${r?.dept_name || "this department"}? This action cannot be undone.`,
       disabled: (r) => isSaving || isMutatingAction,
       onClick: (r) => stageHardDeleteDepartment(r) },
-  ], [editingDeptId, isMutatingAction, isSaving, onStartEditingDept, onStopEditingDept,
-    openDeactivateDepartmentDialog, openToggleDepartmentDialog, pendingDeactivatedDepartmentIds, stageHardDeleteDepartment]);
+  ], [isMutatingAction, isSaving, openDeactivateDepartmentDialog, openEditDepartmentDialog,
+    openToggleDepartmentDialog, pendingDeactivatedDepartmentIds, stageHardDeleteDepartment]);
 
   const renderCompanyDetail = useCallback(() => {
     if (!selectedCompany) return null;
@@ -1072,10 +915,7 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         pendingDeactivatedCompanyIds={h.pendingDeactivatedCompanyIds}
         pendingHardDeletedCompanyIds={h.pendingHardDeletedCompanyIds}
         handleCompanyRowClick={h.handleCompanyRowClick}
-        editingCompanyId={h.editingCompanyId}
-        onStartEditing={h.startEditingCompany}
-        onStopEditing={h.stopEditingCompany}
-        onInlineEdit={h.handleInlineEditCompany}
+        openEditCompanyDialog={h.openEditCompanyDialog}
         openToggleCompanyDialog={h.openToggleCompanyDialog}
         openDeactivateCompanyDialog={h.openDeactivateCompanyDialog}
         stageHardDeleteCompany={h.stageHardDeleteCompany}
@@ -1083,10 +923,7 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         openAddDepartmentDialog={h.openAddDepartmentDialog}
         pendingDeactivatedDepartmentIds={h.pendingDeactivatedDepartmentIds}
         pendingHardDeletedDepartmentIds={h.pendingHardDeletedDepartmentIds}
-        editingDeptId={h.editingDeptId}
-        onStartEditingDept={h.startEditingDept}
-        onStopEditingDept={h.stopEditingDept}
-        onInlineEditDept={h.handleInlineEditDepartment}
+        openEditDepartmentDialog={h.openEditDepartmentDialog}
         openToggleDepartmentDialog={h.openToggleDepartmentDialog}
         openDeactivateDepartmentDialog={h.openDeactivateDepartmentDialog}
         stageHardDeleteDepartment={h.stageHardDeleteDepartment}

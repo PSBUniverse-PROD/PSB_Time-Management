@@ -7,13 +7,16 @@ import {
   hashDealerPassword,
   verifyDealerPassword,
 } from "@/core/dealer/dealerAuth";
+import { encryptDealerPassword } from "@/core/dealer/dealerPasswordVault";
+import { userHasDealerAdminRole } from "@/modules/admin/dealer-master-setup/data/dealerAdminAccess.js";
 import { assertFileAllowed, createSignedFileUpload, getSignedFileUrl } from "@/core/storage/files.service";
 import { loadDealerRecords } from "@/core/dealer/dealerRecordSources";
+import { loadPsbContact } from "./psbContact";
 import { DEALER_DOC_TYPES, DEALER_FILE_ACCEPT, DEALER_FILE_MAX_BYTES } from "./dealerPortal.data";
 
 const DEALER_TABLE = "psb_s_dealermaster";
 
-// `remarks` is PSB's internal note and is deliberately left out.
+// `remarks` is PSB's internal note: left out for dealers, added for PSB staff (see loadDealerContext).
 const DEALER_COLUMNS =
   "dealer_id, dealer_code, dealer_name, contact_person, email, phone, mobile, address_line1, address_line2, city, state, postal_code, country, tax_id, payment_terms, credit_limit, is_active, created_at";
 
@@ -23,7 +26,16 @@ const EDITABLE_FIELDS = {
   address: ["address_line1", "address_line2", "state", "city", "postal_code"],
 };
 
+// Fields only PSB staff may change, in the staff view ("Login as dealer").
+const STAFF_EDITABLE_FIELDS = {
+  company: ["payment_terms", "credit_limit", "remarks"],
+};
+
 const FIELD_MAX_LENGTH = 200;
+// PSB's internal remarks may be longer than the other profile fields.
+const FIELD_MAX_LENGTHS = { remarks: 2000 };
+// psb_s_dealermaster.credit_limit is numeric(14,2).
+const CREDIT_LIMIT_MAX = 999999999999.99;
 const SESSION_ENDED = "Your session has ended. Please sign in again.";
 
 // ── Attachments (psb_m_dealerfile + private bucket dealer-files) ──
@@ -33,7 +45,7 @@ const DEALER_FILE_ALLOWED_TYPES = DEALER_FILE_ACCEPT.split(",");
 const DEALER_FILE_LIMIT = 30;
 const DEALER_FILE_TEXT_MAX = 200;
 // storage_path is deliberately not selected for the browser.
-const DEALER_FILE_COLUMNS = "file_id, file_name, file_size, mime_type, doc_type, note, status_id, created_at";
+const DEALER_FILE_COLUMNS = "file_id, file_name, file_size, mime_type, doc_type, note, status_id, uploaded_by, created_at";
 // Review status comes from the shared workflow status table. A new upload
 // gets the status with this name; staff move it on from there.
 const DEALER_FILE_STATUS_TABLE = "wfk_s_status";
@@ -67,6 +79,7 @@ function toDealerFile(row, statusNames) {
     mime_type: row.mime_type,
     doc_type: row.doc_type,
     note: row.note,
+    uploaded_by_psb: row.uploaded_by === "psb",
     status_name: statusNames.get(String(row.status_id)) || DEALER_FILE_NEW_STATUS,
     created_text: row.created_at
       ? new Date(row.created_at).toLocaleDateString("en-US", { timeZone: "America/Chicago", dateStyle: "medium" })
@@ -99,18 +112,24 @@ async function loadDealerContext({ withPasswordHash = false } = {}) {
   const session = await getDealerSession();
   if (!session?.dealerId) return null;
 
+  // "Login as dealer": the staff view ends as soon as the staff member loses
+  // the admin-enroll / admin-master role.
+  const staff = session.staff || null;
+  if (staff && !(await userHasDealerAdminRole(staff.userId))) return null;
+
   const supabase = getSupabaseAdmin();
   const accountColumns = withPasswordHash
     ? "account_id, username, is_active, last_login_at, password_hash"
     : "account_id, username, is_active, last_login_at";
+  const dealerColumns = staff ? `${DEALER_COLUMNS}, remarks` : DEALER_COLUMNS;
 
   const [{ data: account }, { data: dealer }] = await Promise.all([
     supabase.from(DEALER_ACCOUNT_TABLE).select(accountColumns).eq("dealer_id", session.dealerId).maybeSingle(),
-    supabase.from(DEALER_TABLE).select(DEALER_COLUMNS).eq("dealer_id", session.dealerId).maybeSingle(),
+    supabase.from(DEALER_TABLE).select(dealerColumns).eq("dealer_id", session.dealerId).maybeSingle(),
   ]);
 
   if (!account || account.is_active === false || !dealer || dealer.is_active === false) return null;
-  return { supabase, account, dealer };
+  return { supabase, account, dealer, staff };
 }
 
 /**
@@ -124,9 +143,11 @@ export async function loadDealerAccountData() {
     status: "ok",
     dealer: context.dealer,
     username: context.account.username,
+    staff: context.staff ? { name: context.staff.name } : null,
     lastLoginAt: context.account.last_login_at || null,
     files: await loadDealerFiles(context.supabase, context.dealer.dealer_id),
     projects: await loadDealerProjects(context.dealer.dealer_id),
+    psbContact: await loadPsbContact(),
   };
 }
 
@@ -138,20 +159,33 @@ export async function updateDealerProfileAction(section, values) {
   const context = await loadDealerContext();
   if (!context) return { success: false, error: SESSION_ENDED };
 
-  const fields = EDITABLE_FIELDS[section];
-  if (!fields) return { success: false, error: "Unknown form." };
+  if (!EDITABLE_FIELDS[section]) return { success: false, error: "Unknown form." };
+  const fields = context.staff
+    ? [...EDITABLE_FIELDS[section], ...(STAFF_EDITABLE_FIELDS[section] || [])]
+    : EDITABLE_FIELDS[section];
 
   const payload = {};
   for (const field of fields) {
     const text = String(values?.[field] ?? "").trim();
-    if (text.length > FIELD_MAX_LENGTH) {
-      return { success: false, error: `One of the fields is too long (maximum ${FIELD_MAX_LENGTH} characters).` };
+    const maxLength = FIELD_MAX_LENGTHS[field] || FIELD_MAX_LENGTH;
+    if (text.length > maxLength) {
+      return { success: false, error: `One of the fields is too long (maximum ${maxLength} characters).` };
     }
     payload[field] = text === "" ? null : text;
   }
 
   if (section === "company" && !payload.dealer_name) {
     return { success: false, error: "Dealer name is required." };
+  }
+  if (payload.credit_limit !== undefined && payload.credit_limit !== null) {
+    const amount = Number(payload.credit_limit);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return { success: false, error: "Credit limit must be a number of 0 or more." };
+    }
+    if (amount > CREDIT_LIMIT_MAX) {
+      return { success: false, error: "Credit limit can be at most 999,999,999,999.99." };
+    }
+    payload.credit_limit = amount;
   }
   if (section === "contacts" && payload.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) {
     return { success: false, error: "Please enter a valid email address." };
@@ -168,7 +202,7 @@ export async function updateDealerProfileAction(section, values) {
     .eq("dealer_id", context.dealer.dealer_id);
   if (error) {
     console.error("updateDealerProfileAction:", error.message);
-    return { success: false, error: "Unable to save your changes. Please try again." };
+    return { success: false, error: "Unable to save your changes. Please try again.", unexpected: true };
   }
   return { success: true };
 }
@@ -197,11 +231,17 @@ export async function changeDealerPasswordAction({ currentPassword, newPassword 
 
   const { error } = await context.supabase
     .from(DEALER_ACCOUNT_TABLE)
-    .update({ password_hash: passwordHash, failed_attempts: 0, locked_until: null, updated_at: new Date().toISOString() })
+    .update({
+      password_hash: passwordHash,
+      password_encrypted: encryptDealerPassword(newPassword),
+      failed_attempts: 0,
+      locked_until: null,
+      updated_at: new Date().toISOString(),
+    })
     .eq("account_id", context.account.account_id);
   if (error) {
     console.error("changeDealerPasswordAction:", error.message);
-    return { success: false, error: "Unable to update your password. Please try again." };
+    return { success: false, error: "Unable to update your password. Please try again.", unexpected: true };
   }
   return { success: true };
 }
@@ -222,7 +262,7 @@ export async function createDealerFileUploadAction({ name, type, size, docType }
     .eq("dealer_id", dealerId);
   if (countError) {
     console.error("createDealerFileUploadAction count:", countError.message);
-    return { success: false, error: "Unable to start the upload. Please try again." };
+    return { success: false, error: "Unable to start the upload. Please try again.", unexpected: true };
   }
   if ((count || 0) >= DEALER_FILE_LIMIT) {
     return { success: false, error: `You have reached the limit of ${DEALER_FILE_LIMIT} files. Contact PSB to remove old ones.` };
@@ -270,7 +310,7 @@ export async function saveDealerFileAction({ storagePath, name, type, size, docT
   );
   if (!newStatus) {
     console.error(`saveDealerFileAction: no "${DEALER_FILE_NEW_STATUS}" row in ${DEALER_FILE_STATUS_TABLE}`);
-    return { success: false, error: "The file uploaded but could not be saved. Please contact PSB." };
+    return { success: false, error: "The file uploaded but could not be saved. Please contact PSB.", unexpected: true };
   }
 
   const cleanNote = String(note ?? "").trim().slice(0, DEALER_FILE_TEXT_MAX);
@@ -285,13 +325,13 @@ export async function saveDealerFileAction({ storagePath, name, type, size, docT
       doc_type: docType,
       note: cleanNote || null,
       status_id: Number(newStatus[0]),
-      uploaded_by: "dealer",
+      uploaded_by: context.staff ? "psb" : "dealer",
     })
     .select(DEALER_FILE_COLUMNS)
     .single();
   if (error) {
     console.error("saveDealerFileAction:", error.message);
-    return { success: false, error: "The file uploaded but could not be saved. Please try again." };
+    return { success: false, error: "The file uploaded but could not be saved. Please try again.", unexpected: true };
   }
   return { success: true, file: toDealerFile(data, statusNames) };
 }
@@ -314,7 +354,7 @@ export async function getDealerFileUrlAction(fileId) {
     return { success: true, url };
   } catch (urlError) {
     console.error("getDealerFileUrlAction:", urlError?.message);
-    return { success: false, error: "Could not open the file. Please try again." };
+    return { success: false, error: "Could not open the file. Please try again.", unexpected: true };
   }
 }
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Image from "next/image";
 import dealerIcon from "@/styles/psb_dealer_icon.svg";
 import "../dealerPortal.css";
+import DealerErrorHost from "./DealerErrorHost";
 
 const ACCOUNT_NAV = [
   { key: "overview", label: "Overview" },
@@ -22,7 +23,7 @@ const LATER_NAV = ["Quotes", "Invoices", "Documents"];
  * bar. `active` is the current section key and `onSelect(key)` switches
  * section; nothing here navigates to another page except Logout.
  */
-export default function DealerShell({ dealer, username, active, onSelect, children }) {
+export default function DealerShell({ dealer, username, staff = null, supportEmail = "", active, onSelect, children }) {
   const [signingOut, setSigningOut] = useState(false);
 
   async function handleLogout() {
@@ -31,7 +32,8 @@ export default function DealerShell({ dealer, username, active, onSelect, childr
     try {
       await fetch("/api/dealer/logout", { method: "POST" });
     } finally {
-      window.location.assign("/dealer/login");
+      // Only the dealer session is cleared; staff stay signed in to PSBUniverse.
+      window.location.assign(staff ? "/admin/dealer-master-setup" : "/dealer/login");
     }
   }
 
@@ -39,6 +41,7 @@ export default function DealerShell({ dealer, username, active, onSelect, childr
 
   return (
     <div className="dp-app dp-layout">
+      <DealerErrorHost supportEmail={supportEmail} />
       <aside className="dp-sidebar">
         <div className="dp-brand">
           <Image src={dealerIcon} alt="" className="dp-logo" />
@@ -103,13 +106,25 @@ export default function DealerShell({ dealer, username, active, onSelect, childr
         <div className="dp-sidebar-foot">
           <div className="dp-who-meta">Signed in as <span className="dp-mono">{username}</span></div>
           <button type="button" className="dp-logout" onClick={handleLogout} disabled={signingOut}>
-            {signingOut ? "Signing out..." : "Logout"}
+            {signingOut ? "Signing out..." : staff ? "Exit to Dealer Master" : "Logout"}
           </button>
           <div className="dp-sidebar-note">Premium Steel Buildings Inc.</div>
         </div>
       </aside>
 
-      <div className="dp-main dp-content">{children}</div>
+      <div className="dp-main dp-content">
+        {staff ? (
+          <div className="dp-staff-bar" role="status">
+            <span>
+              <strong>PSB staff view.</strong> You{staff.name ? ` (${staff.name})` : ""} are signed in as {dealer?.dealer_name || "this dealer"}. Changes are saved to this dealer&apos;s account.
+            </span>
+            <button type="button" className="dp-btn" onClick={handleLogout} disabled={signingOut}>
+              {signingOut ? "Exiting..." : "Exit to Dealer Master"}
+            </button>
+          </div>
+        ) : null}
+        {children}
+      </div>
     </div>
   );
 }

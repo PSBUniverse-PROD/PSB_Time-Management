@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Button, InlineEditCell, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
+import { Button, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
 import WorkflowSideNav from "../components/WorkflowSideNav";
 import {
   isSameId, compareText, buildOrderSignature,
@@ -50,7 +50,6 @@ function useWorkflowSetup({ workflows = [], stages = [], stageTypes = [], orgRol
   const [workflowDraft, setWorkflowDraft] = useState({ name: "", desc: "", compId: "", appId: "", deptId: "" });
   const [stageDraft, setStageDraft] = useState({ name: "", desc: "", stagetypeId: "", orgroleId: "" });
   const [participantDraft, setParticipantDraft] = useState({ orgroleId: "", approvaltypeId: "", isActive: true });
-  const [editingStageId, setEditingStageId] = useState(null);
   const [expandedWfId, setExpandedWfId] = useState(null);
   const [expandedStageId, setExpandedStageId] = useState(null);
   const [expandedParticipantId, setExpandedParticipantId] = useState(null);
@@ -64,7 +63,6 @@ function useWorkflowSetup({ workflows = [], stages = [], stageTypes = [], orgRol
     setPendingBatch(createEmptyBatchState()); setDialog(EMPTY_DIALOG);
     setWorkflowDraft({ name: "", desc: "", compId: "", appId: "", deptId: "" }); setStageDraft({ name: "", desc: "", stagetypeId: "", orgroleId: "" });
     setParticipantDraft({ orgroleId: "", approvaltypeId: "", isActive: true });
-    setEditingStageId(null);
   }, [seedWorkflows, seedStages, seedStageParticipants, seedUserOrgRoles]);
 
   const currentOrderSig = useMemo(() => {
@@ -208,7 +206,6 @@ function useWorkflowSetup({ workflows = [], stages = [], stageTypes = [], orgRol
     setOrderedWorkflows(seedWorkflows); setAllStages(seedStages);
     setPendingBatch(createEmptyBatchState()); setPersistedOrderSig(buildOrderSignature(seedWorkflows));
     setDialog(EMPTY_DIALOG); setWorkflowDraft({ name: "", desc: "", compId: "", appId: "", deptId: "" }); setStageDraft({ name: "", desc: "", stagetypeId: "", orgroleId: "" });
-    setEditingStageId(null);
     updateSelectedWfInQuery(seedWorkflows[0]?.wf_id ?? null);
   }, [isMutatingAction, isSavingOrder, seedWorkflows, seedStages, updateSelectedWfInQuery]);
 
@@ -227,7 +224,7 @@ function useWorkflowSetup({ workflows = [], stages = [], stageTypes = [], orgRol
       toastSuccess(`Saved ${pendingSummary.total} batched change(s).`, "Save Batch");
     } catch (error) {
       toastError(error?.message || "Failed to save batched changes.");
-    } finally { setIsMutatingAction(false); setIsSavingOrder(false); setEditingStageId(null); }
+    } finally { setIsMutatingAction(false); setIsSavingOrder(false); }
   }, [currentOrderSig, hasPendingChanges, isMutatingAction, isSavingOrder, orderedWorkflows, pendingBatch, pendingSummary.total, router, selectedWf?.wf_id, updateSelectedWfInQuery]);
 
   const closeDialog = useCallback(() => { if (!isMutatingAction) setDialog(EMPTY_DIALOG); }, [isMutatingAction]);
@@ -503,21 +500,6 @@ function useWorkflowSetup({ workflows = [], stages = [], stageTypes = [], orgRol
   const submitToggleParticipant = useCallback(() => { const row = dialog?.target; const nextIsActive = Boolean(dialog?.nextIsActive); if (!row?.stageparticipant_id) { toastError("Invalid participant."); return; } const participantId = row.stageparticipant_id; setAllStageParticipants((prev) => prev.map((sp, i) => isSameId(sp?.stageparticipant_id, participantId) ? mapStageParticipantRow({ ...sp, is_active: nextIsActive }, i) : sp)); setPendingBatch((prev) => { if (isTempStageParticipantId(participantId)) return { ...prev, participantCreates: prev.participantCreates.map((e) => isSameId(e?.tempId, participantId) ? { ...e, payload: { ...e.payload, is_active: nextIsActive } } : e), participantUpdates: removeObjectKey(prev.participantUpdates, participantId) }; return { ...prev, participantUpdates: { ...prev.participantUpdates, [String(participantId)]: mergeUpdatePatch(prev.participantUpdates?.[String(participantId)], { is_active: nextIsActive }) } }; }); setDialog(EMPTY_DIALOG); toastSuccess(`Participant ${nextIsActive ? "enable" : "disable"} staged for Save Batch.`, "Batching"); }, [dialog]);
   const submitDeactivateParticipant = useCallback(() => { const row = dialog?.target; if (!row?.stageparticipant_id) { toastError("Invalid participant."); return; } const participantId = row.stageparticipant_id; if (isTempStageParticipantId(participantId)) { setAllStageParticipants((items) => items.filter((sp) => !isSameId(sp?.stageparticipant_id, participantId))); setPendingBatch((prev) => ({ ...prev, participantCreates: prev.participantCreates.filter((e) => !isSameId(e?.tempId, participantId)), participantUpdates: removeObjectKey(prev.participantUpdates, participantId) })); setDialog(EMPTY_DIALOG); toastSuccess("Staged participant removed.", "Batching"); return; } setPendingBatch((prev) => ({ ...prev, participantDeactivations: appendUniqueId(prev.participantDeactivations, participantId) })); setDialog(EMPTY_DIALOG); toastSuccess("Participant deactivation staged for Save Batch.", "Batching"); }, [dialog]);
 
-  // ── Inline editing (stage only; workflow uses modal edit) ──
-
-  const startEditingStage = useCallback((row) => { if (isSavingOrder || isMutatingAction) return; const id = String(row?.wfs_id ?? ""); setEditingStageId((prev) => prev === id ? null : id); }, [isMutatingAction, isSavingOrder]);
-  const stopEditingStage = useCallback(() => { setEditingStageId(null); }, []);
-
-  const handleInlineEditStage = useCallback((row, key, value) => {
-    const stageId = row?.wfs_id;
-    if (!stageId || isSavingOrder || isMutatingAction) return;
-    setAllStages((prev) => prev.map((s, i) => isSameId(s?.wfs_id, stageId) ? mapWorkflowStageRow({ ...s, [key]: value || null }, i) : s));
-    setPendingBatch((prev) => {
-      if (isTempStageId(stageId)) return { ...prev, stageCreates: prev.stageCreates.map((e) => isSameId(e?.tempId, stageId) ? { ...e, payload: { ...e.payload, [key]: value || null } } : e) };
-      return { ...prev, stageUpdates: { ...prev.stageUpdates, [String(stageId)]: mergeUpdatePatch(prev.stageUpdates?.[String(stageId)], { [key]: value || null }) } };
-    });
-  }, [isMutatingAction, isSavingOrder]);
-
   return {
     decoratedWorkflows, decoratedSelectedWfStages, dialog, workflowDraft, stageDraft, participantDraft,
     isSavingOrder, isMutatingAction, pendingSummary, hasPendingChanges,
@@ -537,8 +519,6 @@ function useWorkflowSetup({ workflows = [], stages = [], stageTypes = [], orgRol
     openAddParticipantDialog, openEditParticipantDialog, openToggleParticipantDialog, openDeactivateParticipantDialog,
     stageHardDeleteParticipant, unstageHardDeleteParticipant,
     submitAddParticipant, submitEditParticipant, submitToggleParticipant, submitDeactivateParticipant,
-    handleInlineEditStage,
-    editingStageId, startEditingStage, stopEditingStage,
   };
 }
 
@@ -584,7 +564,7 @@ function WorkflowTable({
   openToggleWorkflowDialog, openDeactivateWorkflowDialog, stageHardDeleteWorkflow, onUndoBatchActionWf,
   openAddStageDialog,
   // stage props
-  editingStageId, onStartEditingStage, onStopEditingStage, onInlineEditStage,
+  // Rows open/close on click, so editing happens in the Edit windows, never inline.
   openEditStageDialog, openToggleStageDialog, openDeactivateStageDialog, stageHardDeleteStage, onUndoBatchActionStage,
   stageTypeOptions, orgRoleOptions,
   // stage expansion props
@@ -629,13 +609,10 @@ function WorkflowTable({
   // ── Stage columns for nested detail ──
   const stageColumns = useMemo(() => [
     { key: "stage_name", label: "Stage Name", width: "22%", sortable: true, render: (row) => {
-      const m = batchMarker(row?.__batchState || ""); const isEditing = String(row?.wfs_id ?? "") === String(editingStageId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return (<span><InlineEditCell value={row?.stage_name || ""} onCommit={(val) => onInlineEditStage?.(row, "stage_name", val)} onCancel={onStopEditingStage} disabled={editDisabled} />{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
+      const m = batchMarker(row?.__batchState || "");
+      return (<span>{row?.stage_name || ""}{m.text ? <span className={m.cls}>{m.text}</span> : null}</span>);
     }},
-    { key: "stage_description", label: "Description", width: "28%", sortable: true, render: (row) => {
-      const isEditing = String(row?.wfs_id ?? "") === String(editingStageId ?? ""); const editDisabled = !isEditing || isSavingOrder || isMutatingAction;
-      return <InlineEditCell value={row?.stage_description || ""} onCommit={(val) => onInlineEditStage?.(row, "stage_description", val)} onCancel={onStopEditingStage} disabled={editDisabled} />;
-    }},
+    { key: "stage_description", label: "Description", width: "28%", sortable: true, render: (row) => row?.stage_description || "" },
     { key: "stagetype_id", label: "Stage Type", width: "16%", sortable: true, render: (row) => {
       const stageType = stageTypeOptions.find((st) => isSameId(st?.stagetype_id, row?.stagetype_id));
       return <span className="small">{stageType?.stagetype_name || row?.stagetype_id || "--"}</span>;
@@ -646,16 +623,15 @@ function WorkflowTable({
     // }},
     { key: "stage_order", label: "Order", width: "8%", sortable: true, align: "center", render: (row) => <span className="text-muted small">{row?.stage_order ?? "--"}</span> },
     { key: "is_active_bool", label: "Active", width: "10%", sortable: true, align: "center", render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} /> },
-  ], [editingStageId, isMutatingAction, isSavingOrder, onInlineEditStage, onStopEditingStage, stageTypeOptions, orgRoleOptions]);
+  ], [stageTypeOptions, orgRoleOptions]);
 
   const stageActions = useMemo(() => [
-    { key: "edit-stage", label: "Edit", type: "secondary", icon: "pen", visible: (r) => String(r?.wfs_id ?? "") !== String(editingStageId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openEditStageDialog(r) },
-    { key: "cancel-edit-stage", label: "Cancel", type: "secondary", icon: "xmark", visible: (r) => String(r?.wfs_id ?? "") === String(editingStageId ?? ""), onClick: () => onStopEditingStage() },
-    { key: "add-participant", label: "+ Add Participant", type: "success", icon: "plus", visible: (r) => String(r?.wfs_id ?? "") !== String(editingStageId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openAddParticipantDialog(r) },
-    { key: "restore-stage", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => (!Boolean(r?.is_active_bool) || pendingDeactivatedStageIds.has(String(r?.wfs_id ?? ""))) && String(r?.wfs_id ?? "") !== String(editingStageId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openToggleStageDialog(r) },
-    { key: "deactivate-stage", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedStageIds.has(String(r?.wfs_id ?? "")) && String(r?.wfs_id ?? "") !== String(editingStageId ?? ""), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openDeactivateStageDialog(r) },
-    { key: "delete-stage", label: "Delete", type: "danger", icon: "trash", visible: (r) => String(r?.wfs_id ?? "") !== String(editingStageId ?? ""), confirm: true, confirmMessage: (r) => `Permanently delete ${r?.stage_name || "this stage"}? This action cannot be undone.`, disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => stageHardDeleteStage(r) },
-  ], [editingStageId, isMutatingAction, isSavingOrder, onStopEditingStage, openAddParticipantDialog, openDeactivateStageDialog, openEditStageDialog, openToggleStageDialog, pendingDeactivatedStageIds, stageHardDeleteStage]);
+    { key: "edit-stage", label: "Edit", type: "secondary", icon: "pen", disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openEditStageDialog(r) },
+    { key: "add-participant", label: "+ Add Participant", type: "success", icon: "plus", disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openAddParticipantDialog(r) },
+    { key: "restore-stage", label: "Restore", type: "secondary", icon: "rotate-left", visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedStageIds.has(String(r?.wfs_id ?? "")), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openToggleStageDialog(r) },
+    { key: "deactivate-stage", label: "Deactivate", type: "secondary", icon: "ban", visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedStageIds.has(String(r?.wfs_id ?? "")), disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => openDeactivateStageDialog(r) },
+    { key: "delete-stage", label: "Delete", type: "danger", icon: "trash", confirm: true, confirmMessage: (r) => `Permanently delete ${r?.stage_name || "this stage"}? This action cannot be undone.`, disabled: () => isSavingOrder || isMutatingAction, onClick: (r) => stageHardDeleteStage(r) },
+  ], [isMutatingAction, isSavingOrder, openAddParticipantDialog, openDeactivateStageDialog, openEditStageDialog, openToggleStageDialog, pendingDeactivatedStageIds, stageHardDeleteStage]);
 
   const participantColumns = useMemo(() => [
     { key: "orgrole_id", label: "Org Role", width: "30%", sortable: true, render: (row) => { const orgRole = orgRoleOptions.find((or) => isSameId(or?.orgrole_id, row?.orgrole_id)); return <span className="small">{orgRole?.name || row?.orgrole_id || "--"}</span>; } },
@@ -939,8 +915,6 @@ export default function WorkflowSetupView({ workflows, stages, stageTypes, orgRo
         openToggleWorkflowDialog={h.openToggleWorkflowDialog} openDeactivateWorkflowDialog={h.openDeactivateWorkflowDialog}
         stageHardDeleteWorkflow={h.stageHardDeleteWorkflow} onUndoBatchActionWf={h.unstageHardDeleteWorkflow}
         openAddStageDialog={h.openAddStageDialog}
-        editingStageId={h.editingStageId} onStartEditingStage={h.startEditingStage} onStopEditingStage={h.stopEditingStage}
-        onInlineEditStage={h.handleInlineEditStage}
         openEditStageDialog={h.openEditStageDialog} openToggleStageDialog={h.openToggleStageDialog}
         openDeactivateStageDialog={h.openDeactivateStageDialog}
         stageHardDeleteStage={h.stageHardDeleteStage} onUndoBatchActionStage={h.unstageHardDeleteStage}

@@ -28,6 +28,17 @@ export const COMPANY_FIELDS = [
   { key: "credit_limit", label: "Credit limit", readOnly: true, hint: "Set by PSB" },
 ];
 
+// Company fields in the staff view ("Login as dealer"): the PSB-only fields
+// become editable and PSB's internal remarks are shown. Dealers never get this list.
+export const STAFF_COMPANY_FIELDS = [
+  ...COMPANY_FIELDS.map((field) => {
+    if (field.key === "payment_terms") return { ...field, readOnly: false, hint: "PSB only", placeholder: "e.g. Net 30" };
+    if (field.key === "credit_limit") return { ...field, readOnly: false, type: "number", hint: "PSB only", placeholder: "0.00" };
+    return field;
+  }),
+  { key: "remarks", label: "Internal remarks", hint: "PSB only, never shown to the dealer", maxLength: 2000 },
+];
+
 // Paperwork PSB collects from a dealer. `required` ones appear on the
 // "What PSB needs" checklist. Change the list here; keys are stored in
 // psb_m_dealerfile.doc_type, so do not rename a key that is already in use.
