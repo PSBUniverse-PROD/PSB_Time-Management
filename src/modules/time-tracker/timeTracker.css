@@ -1041,6 +1041,17 @@
   color: #64748b;
 }
 
+/* "CST" / "CDT" after the sidebar clock: small and muted so it reads as part of the time. */
+.tt-sidebar-clock-zone {
+  margin-left: 0.35em;
+  font-size: 0.6em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--tt-spruce-600);
+  vertical-align: 0.15em;
+  cursor: help;
+}
+
 .tt-sidebar-nav {
   flex: 1 1 auto;
   flex-direction: column;
@@ -3238,4 +3249,3 @@
     border-radius: 0 0 14px 14px;
   }
 }
-

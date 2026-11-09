@@ -909,7 +909,8 @@ function Sidebar({
     new Intl.DateTimeFormat("en-US", { timeZone: APP_TIMEZONE, timeZoneName: style })
       .formatToParts(currentTime)
       .find((part) => part.type === "timeZoneName")?.value || "";
-  const zoneLabel = `${zoneName("long")} (${zoneName("short")})`;
+  const zoneShort = zoneName("short"); // "CST" / "CDT"
+  const zoneLong = zoneName("long"); // "Central Standard Time" / "Central Daylight Time"
 
   return (
     <header className="tt-sidebar">
@@ -927,9 +928,13 @@ function Sidebar({
 
       {mounted && (
         <div className="tt-sidebar-clock" aria-live="off">
-          <div className="tt-sidebar-clock-time">{timeStr}</div>
+          <div className="tt-sidebar-clock-time">
+            {timeStr}
+            {zoneShort && (
+              <span className="tt-sidebar-clock-zone" title={`${zoneLong} (Dallas)`}>{zoneShort}</span>
+            )}
+          </div>
           <div className="tt-sidebar-clock-date">{dateStr}</div>
-          <div className="tt-sidebar-clock-date" title="Dallas standard time (CST) or daylight time (CDT)">{zoneLabel}</div>
         </div>
       )}
 
@@ -1290,9 +1295,9 @@ function WorkScheduleCard({ schedule, weeklyHoursTarget, seasonDate }) {
   }
 
   const seasonDays = schedule.days.map((d) => scheduleDayOnDate(d, seasonDate));
-  const seasonLabel = daylightShiftMinutes(seasonDate) || isDallasDaylightTime(seasonDate)
-    ? "Daylight time (CDT)"
-    : "Standard time (CST)";
+  const isDaylightWeek = Boolean(daylightShiftMinutes(seasonDate)) || isDallasDaylightTime(seasonDate);
+  const seasonLabel = isDaylightWeek ? "CDT" : "CST";
+  const seasonTitle = isDaylightWeek ? "Central Daylight Time" : "Central Standard Time";
   const groups = groupScheduleDays(seasonDays);
   const workingDayNumbers = schedule.days.map((d) => d.dayOfWeek);
   const restDayNumbers = [1, 2, 3, 4, 5, 6, 7].filter((n) => !workingDayNumbers.includes(n));
@@ -1303,7 +1308,7 @@ function WorkScheduleCard({ schedule, weeklyHoursTarget, seasonDate }) {
         <span className="tt-summary-schedule-name" title={schedule.modelName || undefined}>
           {schedule.modelCode || schedule.modelName || "Work Schedule"}
         </span>
-        <span className="tt-summary-schedule-hours" title="Dallas time for this week">
+        <span className="tt-summary-schedule-hours" title={`${seasonTitle} – Dallas time for this week`}>
           {weeklyHoursTarget.toFixed(2)} hrs/week · {seasonLabel}
         </span>
       </div>
@@ -2706,7 +2711,8 @@ const APPROVAL_STATUS_TABS = [
 ];
 
 /** A week of logs with the hours breakdown — same numbers as the Logs Summary panel. */
-function WeekLogsDetail({ logs, weeklyHoursTarget, remarks }) {
+// weekStart: "YYYY-MM-DD" (Monday), so the note can say whether that week was CST or CDT.
+function WeekLogsDetail({ logs, weeklyHoursTarget, remarks, weekStart }) {
   const { total, overtime, regular } = summarizeLogHours(logs);
   return (
     <>
@@ -2745,7 +2751,10 @@ function WeekLogsDetail({ logs, weeklyHoursTarget, remarks }) {
         <span><strong>Overtime:</strong> {overtime.toFixed(2)} hrs</span>
         <span><strong>Total:</strong> {total.toFixed(2)} hrs</span>
       </div>
-      <p className="tt-timezone-note">All times in {APP_TIMEZONE_LABEL}</p>
+      <p className="tt-timezone-note">
+        All times in {APP_TIMEZONE_LABEL}
+        {weekStart && ` · ${isDallasDaylightTime(weekStart) ? "CDT" : "CST"}`}
+      </p>
 
       <div className="tt-approval-detail-remarks">
         <span className="tt-approval-detail-remarks-label">Remarks / Notes:</span>
@@ -2786,7 +2795,7 @@ function ApprovalDetailPanel({ row }) {
 
   return (
     <div className="tt-approval-detail">
-      <WeekLogsDetail logs={logs} weeklyHoursTarget={weeklyHoursTarget} remarks={row.remarks} />
+      <WeekLogsDetail logs={logs} weeklyHoursTarget={weeklyHoursTarget} remarks={row.remarks} weekStart={row.week_start_date} />
     </div>
   );
 }
@@ -3322,7 +3331,7 @@ function TimesheetsPage() {
       });
 
       const { dateStr, timeStr } = getAppDateParts();
-      const generated = `Generated ${formatSheetDate(dateStr)} ${formatTimeDisplay(timeStr)} · All times in ${APP_TIMEZONE_LABEL}`;
+      const generated = `Generated ${formatSheetDate(dateStr)} ${formatTimeDisplay(timeStr)} · All times in ${APP_TIMEZONE_LABEL} · ${isDallasDaylightTime(toDateStr(weekRange.start)) ? "CDT" : "CST"}`;
       const pageCount = doc.getNumberOfPages();
       for (let p = 1; p <= pageCount; p += 1) {
         doc.setPage(p);
@@ -3458,7 +3467,7 @@ function TimesheetsPage() {
                   {!detail ? (
                     <div className="tt-approval-detail-loading">Loading...</div>
                   ) : (
-                    <WeekLogsDetail logs={detail.logs} weeklyHoursTarget={detail.weeklyHoursTarget} remarks={employee.remarks} />
+                    <WeekLogsDetail logs={detail.logs} weeklyHoursTarget={detail.weeklyHoursTarget} remarks={employee.remarks} weekStart={toDateStr(weekRange.start)} />
                   )}
                 </div>
               );
