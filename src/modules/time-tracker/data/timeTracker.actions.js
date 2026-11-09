@@ -826,7 +826,10 @@ async function loadScheduleRulesForUser(supabase, userId) {
  * scheduled weekly hours, and how many employees use it.
  */
 export async function loadScheduleModels() {
-  const supabase = getSupabaseAdmin();
+  // Setup data: Time Tracker admins only (same check as the save actions).
+  const auth = await requireTimeTrackerAdmin();
+  if (auth.error) throw new Error(auth.error);
+  const { supabase } = auth;
 
   const [modelsRes, daysRes, assignmentsRes] = await Promise.all([
     supabase
@@ -961,6 +964,26 @@ export async function saveScheduleModel({ modelId, modelName, days }) {
     return { success: false, error: "Pick at least one working day." };
   }
 
+  // ── Names are unique (ignoring case and extra spaces) ──
+  // Two models with the same name can't be told apart in the employee
+  // dropdown. Inactive models count too, since they can be restored.
+  const nameKey = name.replace(/\s+/g, " ").toLowerCase();
+  const { data: namedModels, error: namesError } = await supabase
+    .from("time_s_schedulemodel")
+    .select("model_id, model_name, model_code");
+  if (namesError) {
+    console.error("saveScheduleModel name check error:", describeError(namesError));
+    return { success: false, error: "Unable to check the model name. Please try again." };
+  }
+  const sameName = (namedModels || []).find(
+    (row) =>
+      String(row.model_id) !== String(modelId || "") &&
+      String(row.model_name || "").trim().replace(/\s+/g, " ").toLowerCase() === nameKey,
+  );
+  if (sameName) {
+    return { success: false, error: `"${sameName.model_name}" (${sameName.model_code}) already uses this name. Pick another name.` };
+  }
+
   // ── Save the model header ──
   // Code and order are set once, when the model is created
   // (nextScheduleModelCodeAndOrder); editing changes only the name and days.
@@ -968,18 +991,23 @@ export async function saveScheduleModel({ modelId, modelName, days }) {
   const now = new Date().toISOString();
 
   if (savedModelId) {
-    const { error } = await supabase
+    const { data: updatedRows, error } = await supabase
       .from("time_s_schedulemodel")
       .update({
         model_name: name,
         updated_at: now,
         updated_by: userId,
       })
-      .eq("model_id", savedModelId);
+      .eq("model_id", savedModelId)
+      .select("model_id");
 
     if (error) {
       console.error("saveScheduleModel update error:", describeError(error));
       return { success: false, error: "Failed to save the schedule model." };
+    }
+    // Deleted by another admin while this one was editing.
+    if (!updatedRows?.length) {
+      return { success: false, error: "This model no longer exists. Close the window and refresh." };
     }
   } else {
     let next;
@@ -1006,32 +1034,75 @@ export async function saveScheduleModel({ modelId, modelName, days }) {
     savedModelId = data.model_id;
   }
 
-  // ── Replace the working days ──
-  const { error: deleteError } = await supabase
-    .from("time_s_schedulemodelday")
-    .delete()
-    .eq("model_id", savedModelId);
+  // ── Save the working days ──
+  // The model must never be left without days: employees on it would get
+  // only rest days, so their clock-outs would count as overtime. So days that
+  // stay are updated in place, new days are added, and days no longer worked
+  // are removed LAST. Supabase JS has no transaction; if a step fails, the
+  // model keeps a mix of old and new days (never none) and saving again
+  // finishes it.
+  let existingDays = [];
+  if (modelId) {
+    try {
+      existingDays = await loadModelDays(supabase, savedModelId);
+    } catch (err) {
+      console.error("saveScheduleModel load days error:", err.message);
+      return { success: false, error: "Saved the name, but couldn't load the model's days. Please save again." };
+    }
+  }
+  const existingDayNumbers = new Set(existingDays.map((day) => day.dayOfWeek));
+  const savedDayNumbers = new Set(cleanDays.map((day) => day.dayOfWeek));
+  const toDayRow = (day) => ({
+    start_time: day.startTime,
+    break_start: day.breakStart || null,
+    break_end: day.breakEnd || null,
+    end_time: day.endTime,
+  });
 
-  if (deleteError) {
-    console.error("saveScheduleModel delete days error:", describeError(deleteError));
+  const daysToUpdate = cleanDays.filter((day) => existingDayNumbers.has(day.dayOfWeek));
+  const daysToInsert = cleanDays.filter((day) => !existingDayNumbers.has(day.dayOfWeek));
+  const dayNumbersToRemove = [...existingDayNumbers].filter((dayOfWeek) => !savedDayNumbers.has(dayOfWeek));
+
+  const updateResults = await Promise.all(
+    daysToUpdate.map((day) =>
+      supabase
+        .from("time_s_schedulemodelday")
+        .update(toDayRow(day))
+        .eq("model_id", savedModelId)
+        .eq("day_of_week", day.dayOfWeek),
+    ),
+  );
+  const failedUpdate = updateResults.find((result) => result.error);
+  if (failedUpdate) {
+    console.error("saveScheduleModel update days error:", describeError(failedUpdate.error));
     return { success: false, error: "Saved the model, but failed to update its days. Please save again." };
   }
 
-  const { error: insertDaysError } = await supabase.from("time_s_schedulemodelday").insert(
-    cleanDays.map((day) => ({
-      model_id: savedModelId,
-      day_of_week: day.dayOfWeek,
-      start_time: day.startTime,
-      break_start: day.breakStart || null,
-      break_end: day.breakEnd || null,
-      end_time: day.endTime,
-      created_by: userId,
-    })),
-  );
+  if (daysToInsert.length) {
+    const { error: insertDaysError } = await supabase.from("time_s_schedulemodelday").insert(
+      daysToInsert.map((day) => ({
+        model_id: savedModelId,
+        day_of_week: day.dayOfWeek,
+        ...toDayRow(day),
+        created_by: userId,
+      })),
+    );
+    if (insertDaysError) {
+      console.error("saveScheduleModel insert days error:", describeError(insertDaysError));
+      return { success: false, error: "Saved the model, but failed to save its days. Please save again." };
+    }
+  }
 
-  if (insertDaysError) {
-    console.error("saveScheduleModel insert days error:", describeError(insertDaysError));
-    return { success: false, error: "Saved the model, but failed to save its days. Please save again." };
+  if (dayNumbersToRemove.length) {
+    const { error: deleteError } = await supabase
+      .from("time_s_schedulemodelday")
+      .delete()
+      .eq("model_id", savedModelId)
+      .in("day_of_week", dayNumbersToRemove);
+    if (deleteError) {
+      console.error("saveScheduleModel delete days error:", describeError(deleteError));
+      return { success: false, error: "Saved the model, but failed to remove its old days. Please save again." };
+    }
   }
 
   // ── Keep assigned employees' weekly targets in step with the schedule ──
@@ -1156,7 +1227,10 @@ export async function deleteScheduleModel(modelId) {
  * Users with no row yet come back with model_id null ("Not assigned").
  */
 export async function loadEmployeeHoursTargets() {
-  const supabase = getSupabaseAdmin();
+  // Every employee's name and schedule: Time Tracker admins only.
+  const auth = await requireTimeTrackerAdmin();
+  if (auth.error) throw new Error(auth.error);
+  const { supabase } = auth;
 
   const [usersRes, targetsRes] = await Promise.all([
     supabase
@@ -1569,6 +1643,18 @@ export async function recalculateWeekHours({ weekStartDate, targetUserId }) {
   const { locked } = await isWeekLocked(supabase, userId, weekStart);
   if (locked) return { success: true, updated: 0, locked: true };
 
+  const result = await applyCurrentScheduleToWeek(supabase, userId, weekStart, weekEnd);
+  return result.success ? { ...result, locked: false } : result;
+}
+
+/**
+ * Re-apply the employee's CURRENT schedule to one week's clocked-out logs and
+ * write back only the logs whose hours changed. Used by Refresh
+ * (recalculateWeekHours) and by Submit (submitTimesheet). Callers make sure
+ * the week isn't Pending or Approved first — those keep their hours.
+ * @returns {Promise<{success:boolean, updated?:number, error?:string}>}
+ */
+async function applyCurrentScheduleToWeek(supabase, userId, weekStart, weekEnd) {
   let rulesByDay;
   try {
     rulesByDay = await loadScheduleRulesForUser(supabase, userId);
@@ -1619,7 +1705,7 @@ export async function recalculateWeekHours({ weekStartDate, targetUserId }) {
     updated += 1;
   }
 
-  return { success: true, updated, locked: false };
+  return { success: true, updated };
 }
 
 const WORKFLOW_STATUS_PENDING = "Pending";
@@ -1662,7 +1748,7 @@ export async function loadWeekSubmissionStatus(weekStartDate, targetUserId) {
 
   const { data: submission } = await supabase
     .from("time_t_timesheetsubmissions")
-    .select("submission_id, submitted_at, remarks")
+    .select("submission_id, submitted_at, remarks, weekly_hours_target, schedule_snapshot")
     .eq("user_id", userId)
     .eq("week_start_date", weekStartDate)
     .maybeSingle();
@@ -1775,6 +1861,18 @@ export async function loadWeekSubmissionStatus(weekStartDate, targetUserId) {
   return {
     hasSubmission: true,
     statusName,
+    // Pending/Approved: the schedule saved at submit, in step with the frozen
+    // weekly target. Otherwise null, and screens show the current schedule.
+    frozenSchedule:
+      LOCKED_SUBMISSION_STATUSES.has(String(statusName || "").toLowerCase()) && submission.schedule_snapshot
+        ? submission.schedule_snapshot
+        : null,
+    // Pending/Approved: the weekly target saved at submit (frozen). Otherwise
+    // null, and screens show the employee's current target.
+    frozenWeeklyHoursTarget:
+      LOCKED_SUBMISSION_STATUSES.has(String(statusName || "").toLowerCase()) && submission.weekly_hours_target != null
+        ? Number(submission.weekly_hours_target)
+        : null,
     submittedAt: submission.submitted_at,
     // The "on behalf of" tag is for the approver; the editable box gets the
     // remarks without it so a resubmit doesn't add a second copy.
@@ -1841,6 +1939,37 @@ export async function submitTimesheet({ weekStartDate, weekEndDate, remarks, tar
     }
   }
 
+  // Submit with the employee's CURRENT schedule: re-apply it to this week's
+  // hours first (same as Refresh), so a model changed since the hours were
+  // saved is what gets submitted. The week isn't Pending/Approved here (checked above).
+  const submitWeekStart = getMondayOfWeekStr(weekStartDate);
+  const recalc = await applyCurrentScheduleToWeek(supabase, userId, submitWeekStart, addDaysStr(submitWeekStart, 6));
+  if (!recalc.success) {
+    return { success: false, error: `${recalc.error} Nothing was submitted.` };
+  }
+
+  // Keep the weekly target (and the model it came from) on the timesheet:
+  // while it's Pending or Approved, the week shows these even if the model changes later.
+  let snapshotTarget;
+  let snapshotModelCode;
+  let snapshotSchedule;
+  try {
+    const [targetInfo, model] = await Promise.all([
+      loadHoursTargetInfo(supabase, userId),
+      loadUserScheduleModel(supabase, userId),
+    ]);
+    snapshotTarget = targetInfo.weeklyHoursTarget;
+    snapshotModelCode = model?.modelCode ?? null;
+    // Same shape as loadUserScheduleModel, so the Summary's Work Schedule card
+    // can show a frozen week exactly as it was submitted.
+    snapshotSchedule = model
+      ? { modelId: model.modelId, modelCode: model.modelCode, modelName: model.modelName, days: model.days || [] }
+      : null;
+  } catch (err) {
+    console.error("submitTimesheet schedule snapshot error:", err.message);
+    return { success: false, error: "Unable to load the work schedule. Nothing was submitted." };
+  }
+
   const { data: logs } = await supabase
     .from("time_t_logs")
     .select("total_hours, overtime_hours")
@@ -1894,6 +2023,9 @@ export async function submitTimesheet({ weekStartDate, weekEndDate, remarks, tar
         regular_hours: regularHours,
         overtime_hours: overtimeHours,
         remarks: storedRemarks || null,
+        weekly_hours_target: snapshotTarget,
+        schedule_model_code: snapshotModelCode,
+        schedule_snapshot: snapshotSchedule,
         submitted_at: now,
         updated_at: now,
         updated_by: actorId,
@@ -1918,6 +2050,9 @@ export async function submitTimesheet({ weekStartDate, weekEndDate, remarks, tar
         regular_hours: regularHours,
         overtime_hours: overtimeHours,
         remarks: storedRemarks || null,
+        weekly_hours_target: snapshotTarget,
+        schedule_model_code: snapshotModelCode,
+        schedule_snapshot: snapshotSchedule,
         submitted_at: now,
         created_by: actorId,
       })
@@ -2399,7 +2534,7 @@ export async function loadSubmissionLogs(submissionId) {
 
   const { data: submission } = await supabase
     .from("time_t_timesheetsubmissions")
-    .select("user_id")
+    .select("user_id, week_start_date, weekly_hours_target")
     .eq("submission_id", submissionId)
     .maybeSingle();
   if (!submission) return { logs: [], weeklyHoursTarget: DEFAULT_WEEKLY_HOURS_TARGET };
@@ -2425,6 +2560,12 @@ export async function loadSubmissionLogs(submissionId) {
       .order("clock_in_date", { ascending: true }),
     loadHoursTargetInfo(supabase, submission.user_id),
   ]);
+
+  // Pending/Approved timesheets show the weekly target saved when submitted.
+  if (submission.weekly_hours_target != null) {
+    const { locked } = await isWeekLocked(supabase, submission.user_id, submission.week_start_date);
+    if (locked) hoursTargetResult.weeklyHoursTarget = Number(submission.weekly_hours_target);
+  }
 
   if (logsResult.error) {
     console.error("loadSubmissionLogs error:", describeError(logsResult.error));

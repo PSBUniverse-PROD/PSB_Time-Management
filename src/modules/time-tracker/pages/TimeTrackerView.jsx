@@ -85,7 +85,10 @@ import {
   getAppTodayDate,
   getAppTodayStr,
   groupScheduleDays,
+  isDallasDaylightTime,
+  daylightShiftMinutes,
   resolveScheduleDay,
+  scheduleDayOnDate,
   summarizeScheduleDays,
   validateScheduleDay,
 } from "../data/timeTracker.data";
@@ -900,6 +903,14 @@ function Sidebar({
     timeZone: APP_TIMEZONE,
   });
 
+  // Dallas season right now, from the same live clock: "Central Standard Time (CST)"
+  // or "Central Daylight Time (CDT)". Switches by itself on the change-over dates.
+  const zoneName = (style) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: APP_TIMEZONE, timeZoneName: style })
+      .formatToParts(currentTime)
+      .find((part) => part.type === "timeZoneName")?.value || "";
+  const zoneLabel = `${zoneName("long")} (${zoneName("short")})`;
+
   return (
     <header className="tt-sidebar">
       <div className="tt-module-identity">
@@ -918,6 +929,7 @@ function Sidebar({
         <div className="tt-sidebar-clock" aria-live="off">
           <div className="tt-sidebar-clock-time">{timeStr}</div>
           <div className="tt-sidebar-clock-date">{dateStr}</div>
+          <div className="tt-sidebar-clock-date" title="Dallas standard time (CST) or daylight time (CDT)">{zoneLabel}</div>
         </div>
       )}
 
@@ -1264,7 +1276,9 @@ function SummaryCard({ icon, iconClass, label, sub, value, valueClass }) {
  * The employee's assigned work schedule, grouped so identical days show once
  * (e.g. "Mon–Fri · 8:00 AM – 5:00 PM · Break 12:00 PM – 1:00 PM").
  */
-function WorkScheduleCard({ schedule, weeklyHoursTarget }) {
+// seasonDate: "YYYY-MM-DD" (the week's Monday). Model times are CST; on a
+// daylight-time week they're shown 1 hour later, as they read on the Dallas clock.
+function WorkScheduleCard({ schedule, weeklyHoursTarget, seasonDate }) {
   if (!schedule || !schedule.days?.length) {
     return (
       <div className="tt-summary-schedule-card is-empty">
@@ -1275,7 +1289,11 @@ function WorkScheduleCard({ schedule, weeklyHoursTarget }) {
     );
   }
 
-  const groups = groupScheduleDays(schedule.days);
+  const seasonDays = schedule.days.map((d) => scheduleDayOnDate(d, seasonDate));
+  const seasonLabel = daylightShiftMinutes(seasonDate) || isDallasDaylightTime(seasonDate)
+    ? "Daylight time (CDT)"
+    : "Standard time (CST)";
+  const groups = groupScheduleDays(seasonDays);
   const workingDayNumbers = schedule.days.map((d) => d.dayOfWeek);
   const restDayNumbers = [1, 2, 3, 4, 5, 6, 7].filter((n) => !workingDayNumbers.includes(n));
 
@@ -1285,7 +1303,9 @@ function WorkScheduleCard({ schedule, weeklyHoursTarget }) {
         <span className="tt-summary-schedule-name" title={schedule.modelName || undefined}>
           {schedule.modelCode || schedule.modelName || "Work Schedule"}
         </span>
-        <span className="tt-summary-schedule-hours">{weeklyHoursTarget.toFixed(2)} hrs/week</span>
+        <span className="tt-summary-schedule-hours" title="Dallas time for this week">
+          {weeklyHoursTarget.toFixed(2)} hrs/week · {seasonLabel}
+        </span>
       </div>
 
       <ul className="tt-summary-schedule-list">
@@ -1365,7 +1385,7 @@ function TimesheetSummary({
       <div className="tt-summary-body">
         <section className="tt-summary-section">
           <h4 className="tt-summary-section-label">Work Schedule</h4>
-          <WorkScheduleCard schedule={schedule} weeklyHoursTarget={weeklyHoursTarget} />
+          <WorkScheduleCard schedule={schedule} weeklyHoursTarget={weeklyHoursTarget} seasonDate={toDateStr(weekRange.start)} />
         </section>
 
         {/* Hours Breakdown */}
@@ -2080,6 +2100,16 @@ function ScheduleModelModal({ model, onClose, onSave }) {
         )}
       </div>
 
+      {/* Editing a model changes the schedule of everyone on it. */}
+      {model?.employee_count > 0 && (
+        <p className="tt-setup-hint" role="note" style={{ color: "#b45309", fontWeight: 600 }}>
+          {model.employee_count} employee{model.employee_count === 1 ? " uses" : "s use"} this model.
+          Saving changes their working days and weekly hours target, and their hours from their next clock-out.
+          Hours already saved stay as they are, but past weeks will show the new weekly target, and
+          correcting an old time entry recalculates it with the new schedule.
+        </p>
+      )}
+
       {/* Quick setup: pick the days, fill one row, Apply. Days that differ are
           fine-tuned in the table below. */}
       <div className="tt-schedule-quick">
@@ -2191,7 +2221,9 @@ function ScheduleModelModal({ model, onClose, onSave }) {
       </div>
 
       <p className="tt-setup-hint tt-schedule-note">
-        All times are Central Time (Dallas). Clock-in has a 10-minute grace period; after that,
+        Enter times in Dallas standard time (CST). From March to November (daylight time, CDT) every
+        time moves 1 hour later on the Dallas clock automatically (e.g. 8:00 → 9:00), and moves back
+        when daylight time ends. Clock-in has a 10-minute grace period; after that,
         each hour late costs 0.5 hr for 11–45 min and 1 hr for 46–59 min. Only the part of the
         break you were clocked in for is deducted (e.g. break 2–3: 1:00–5:00 counts 3 hr,
         8:00–1:00 counts 5 hr; leave both break times empty for no break). Work after Clock
@@ -3880,8 +3912,8 @@ function ManageTimeForPage() {
           totalHours={week.totalHours}
           regularHours={week.regularHours}
           overtimeHours={week.overtimeHours}
-          weeklyHoursTarget={week.weeklyHoursTarget}
-          schedule={week.schedule}
+          weeklyHoursTarget={week.submissionStatus?.frozenWeeklyHoursTarget ?? week.weeklyHoursTarget}
+          schedule={week.submissionStatus?.frozenSchedule ?? week.schedule}
           workedDays={workedDays}
           submissionStatus={week.submissionStatus}
           remarks={week.remarks}
@@ -4173,8 +4205,8 @@ export default function TimeTrackerView({ initialData }) {
           totalHours={totalHours}
           regularHours={regularHours}
           overtimeHours={overtimeHours}
-          weeklyHoursTarget={weeklyHoursTarget}
-          schedule={schedule}
+          weeklyHoursTarget={submissionStatus?.frozenWeeklyHoursTarget ?? weeklyHoursTarget}
+          schedule={submissionStatus?.frozenSchedule ?? schedule}
           workedDays={workedDays}
           submissionStatus={submissionStatus}
           remarks={remarks}

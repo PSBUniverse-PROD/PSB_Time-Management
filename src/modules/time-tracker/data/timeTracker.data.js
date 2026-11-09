@@ -304,6 +304,54 @@ export function summarizeScheduleDays(dayNumbers) {
 }
 
 /**
+ * Business Rule (Dallas daylight saving):
+ * Schedule models are entered in Dallas STANDARD time (CST). On a date when
+ * Dallas is on daylight time (CDT, March–November) the same schedule is one
+ * hour later on the Dallas clock (8:00 CST = 9:00 CDT), so every scheduled
+ * time moves +60 minutes; when daylight time ends it goes back on its own.
+ * Clock-ins are stored as Dallas clock time, so only the schedule moves.
+ * Applies from DAYLIGHT_RULE_START on, so hours before that date never change.
+ */
+export const DAYLIGHT_SHIFT_MINUTES = 60;
+export const DAYLIGHT_RULE_START = "2026-11-08";
+
+/** True when Dallas is on daylight time (CDT) on this "YYYY-MM-DD" date (checked at midday, away from the 2 AM switch). */
+export function isDallasDaylightTime(dateStr) {
+  const [y, m, d] = String(dateStr || "").split("-").map(Number);
+  if (!y || !m || !d) return false;
+  const middayDallas = new Date(Date.UTC(y, m - 1, d, 18)); // 12:00 CST / 1:00 PM CDT
+  const zone = new Intl.DateTimeFormat("en-US", { timeZone: APP_TIMEZONE, timeZoneName: "short" })
+    .formatToParts(middayDallas)
+    .find((part) => part.type === "timeZoneName")?.value;
+  return zone === "CDT";
+}
+
+/** Minutes to add to a model's CST times on this date: 60 on daylight-time dates (from DAYLIGHT_RULE_START), else 0. */
+export function daylightShiftMinutes(dateStr) {
+  if (!dateStr || String(dateStr) < DAYLIGHT_RULE_START) return 0;
+  return isDallasDaylightTime(dateStr) ? DAYLIGHT_SHIFT_MINUTES : 0;
+}
+
+/** A schedule day's times as they read on the Dallas clock on this date ("HH:MM"; wraps past midnight). */
+export function scheduleDayOnDate(day, dateStr) {
+  const offset = daylightShiftMinutes(dateStr);
+  if (!day || !offset) return day;
+  const move = (value) => {
+    const hhmm = toHHMM(value);
+    if (!hhmm) return "";
+    const total = (toMinutes(hhmm) + offset) % MINUTES_PER_DAY;
+    return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+  };
+  return {
+    ...day,
+    startTime: move(day.startTime),
+    breakStart: move(day.breakStart),
+    breakEnd: move(day.breakEnd),
+    endTime: move(day.endTime),
+  };
+}
+
+/**
  * Hours for one clocked-out log, using the employee's schedule model.
  *
  * Business Rule:
@@ -377,7 +425,14 @@ export function computeLogHours({ clockInDate, clockInTime, clockOutDate, clockO
     };
   }
 
-  const shift = resolveScheduleDay(rule);
+  // Models are in Dallas standard time (CST); on a daylight-time date every
+  // scheduled time is 1 hour later on the Dallas clock (8:00 CST = 9:00 CDT).
+  // Shifted in minutes, so a late shift can roll past midnight correctly.
+  const offset = daylightShiftMinutes(clockInDate);
+  const baseShift = resolveScheduleDay(rule);
+  const shift = offset
+    ? Object.fromEntries(Object.entries(baseShift).map(([key, value]) => [key, value == null ? value : value + offset]))
+    : baseShift;
 
   // Clock-in: early time isn't counted. Lateness is deducted by the minutes
   // past each full hour late: 0–10 grace, 11–45 → 0.5 hr, 46–59 → 1 hr
