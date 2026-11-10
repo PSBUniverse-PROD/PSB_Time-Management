@@ -8,13 +8,14 @@
 import {
   loadUserMasterLookups, loadUserMasterUsers, loadUserMasterDetail,
   deleteUserAction, saveUserMasterBatch,
+  loadUserSeatsAction, addUserSeatAction, makeMainSeatAction, removeUserSeatAction,
 } from "./userMasterSetup.actions.js";
 
 // ─── CONSTANTS ─────────────────────────────────────────────
 
 export const TABS = [
   { key: "profile", label: "Profile", description: "Core identity and contact details for the selected user." },
-  { key: "organization", label: "Organization", description: "Company assignment, department hierarchy, position, and workflow status." },
+  { key: "organization", label: "Organization", description: "Seats (positions held in any company), hire date and status." },
   { key: "access", label: "Access", description: "Application and role mappings for what the user can access." },
   { key: "account", label: "Account", description: "Authentication account controls and last login activity." },
 ];
@@ -178,8 +179,7 @@ export function buildUserPayload(form, password) {
     first_name: normalizeOptionalText(form?.first_name), middle_name: normalizeOptionalText(form?.middle_name),
     last_name: normalizeOptionalText(form?.last_name), phone: normalizeOptionalText(form?.phone),
     address: normalizeOptionalText(form?.address),
-    comp_id: normalizeOptionalText(form?.comp_id), dept_id: normalizeOptionalText(form?.dept_id),
-    position: normalizeOptionalText(form?.position), hire_date: normalizeOptionalText(form?.hire_date),
+    hire_date: normalizeOptionalText(form?.hire_date),
     status_id: normalizeOptionalText(form?.status_id), is_active: Boolean(form?.is_active),
     ...(normalizeText(password) ? { password: normalizeText(password) } : {}),
   };
@@ -247,4 +247,21 @@ export async function executeBatchSave(pendingBatch) {
 export async function executeDeactivateUser(userId) {
   const result = await deleteUserAction(userId);
   return Number(result?.revokedAccessCount || 0);
+}
+
+// Seats save straight away (not part of Save Batch). Each returns { success, error }.
+export async function fetchUserSeats(userId) {
+  return loadUserSeatsAction(userId);
+}
+
+export async function addUserSeat(userId, positionId) {
+  return addUserSeatAction(userId, positionId);
+}
+
+export async function makeMainSeat(userId, positionId) {
+  return makeMainSeatAction(userId, positionId);
+}
+
+export async function removeUserSeat(userId, positionId) {
+  return removeUserSeatAction(userId, positionId);
 }

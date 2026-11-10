@@ -1,0 +1,406 @@
+/* Organization Setup: Company → Department → Position → People, left to right. */
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: var(--psb-surface);
+  border: 1px solid var(--psb-border);
+  border-radius: 8px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.stepDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: var(--psb-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stepDotOn {
+  background: var(--psb-brand);
+  color: #ffffff;
+}
+
+.stepText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.stepLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--psb-muted);
+}
+
+.stepValue {
+  max-width: 260px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--psb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepArrow {
+  color: #94a3b8;
+  font-size: 16px;
+}
+
+/* One screen: the columns take the height left under the header and the
+   steps strip (about 230px), all the same height; each list scrolls inside. */
+.flow {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(240px, 300px) minmax(260px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  height: calc(100vh - 230px);
+  min-height: 460px;
+}
+
+/* Stacked columns: back to normal height, lists capped so the page stays usable. */
+@media (max-width: 1199.98px) {
+  .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); height: auto; min-height: 0; }
+  .flow .columnBody { max-height: 420px; }
+}
+
+@media (max-width: 767.98px) {
+  .flow { grid-template-columns: minmax(0, 1fr); }
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--psb-surface);
+  border: 1px solid var(--psb-border);
+  border-radius: 8px;
+}
+
+.columnHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.columnTitle {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--psb-muted);
+}
+
+.columnBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.columnFoot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--psb-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: #f1f5f9;
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--psb-brand);
+  outline-offset: 1px;
+}
+
+.item:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.itemActive,
+.itemActive:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.positionCard {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  border-color: #e2e8f0;
+}
+
+.rankGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rankGroup + .rankGroup {
+  margin-top: 8px;
+}
+
+.rankLabel {
+  padding: 2px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--psb-muted);
+}
+
+.orderRow {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.orderRow > .item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.orderButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orderButton {
+  flex: 1 1 0;
+  width: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.orderButton:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.orderButton:disabled {
+  border-color: #e2e8f0;
+  color: #cbd5e1;
+}
+
+.cardTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.itemMain {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.itemName {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--psb-ink);
+}
+
+.itemMuted {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--psb-muted);
+}
+
+.itemMeta {
+  font-size: 12px;
+  color: var(--psb-muted);
+}
+
+.count {
+  flex-shrink: 0;
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.itemActive .count {
+  background: var(--psb-brand);
+  color: #ffffff;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px;
+}
+
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--psb-ink);
+}
+
+.sectionLabel {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.chain {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.chainLabel {
+  font-size: 12px;
+  color: var(--psb-muted);
+}
+
+.chainItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--psb-border);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--psb-ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chainItem:hover {
+  border-color: #93c5fd;
+}
+
+.chainSelf {
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chainPeople {
+  font-weight: 400;
+  color: var(--psb-muted);
+}
+
+.chainLine {
+  width: 2px;
+  height: 14px;
+  margin: 4px 0 0 18px;
+  background: #94a3b8;
+}
+
+.people {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef2f6;
+}
+
+.person:last-child {
+  border-bottom: 0;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--psb-brand);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mainSeat {
+  font-size: 12px;
+  font-weight: 700;
+  color: #b45309;
+}

@@ -12,14 +12,21 @@ import {
   buildPanelSnapshot, pendingBatchCount, replaceObjectKeyWithArray, removeObjectKey,
   createEmptyPendingBatch,
   executeBatchSave, executeDeactivateUser, fetchLookups, fetchUsers, fetchUserDetail,
+  fetchUserSeats, addUserSeat, makeMainSeat, removeUserSeat,
 } from "../data/userMasterSetup.data.js";
 
 // ═══════════════════════════════════════════════════════════
 //  HOOKS
 // ═══════════════════════════════════════════════════════════
 
-const EMPTY_ACCESS_EDITOR = { mode: null, access_key: null, original_app_id: "", original_role_id: "", app_id: "", role_id: "" };
+// The status whose name means "active" (see inferActiveFromStatus), so no status id is hard-coded.
+function activeStatusIdOf(statuses, fallback) {
+  const list = Array.isArray(statuses) ? statuses : [];
+  const match = list.find((s) => inferActiveFromStatus(s?.status_id, list, false));
+  return match ? String(match.status_id) : fallback;
+}
 
+const EMPTY_ACCESS_EDITOR = { mode: null, access_key: null, original_app_id: "", original_role_id: "", app_id: "", role_id: "" };
 function useUserPanel({
   lookups, tableRows, selectedUserRow, pendingBatch,
   setTableRows, setPendingBatch, refreshUsers,
@@ -406,6 +413,125 @@ function UserTableSection({ tableRows, panelUserId, panelOpen, onRowClick }) {
   );
 }
 
+// The person's seats (positions they hold, in any company). Changes save
+// straight away; the user's company/department/position follow the main seat.
+function UserSeatsSection({ userId, panelMode, panelEditable, onSeatsChanged }) {
+  const [seats, setSeats] = useState([]);
+  const [options, setOptions] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickedId, setPickedId] = useState("");
+  const [seatToRemove, setSeatToRemove] = useState(null);
+
+  const savedUserId = panelMode !== "add" && normalizeText(userId) && !isTemporaryId(userId) ? normalizeText(userId) : "";
+
+  const loadSeats = useCallback(async () => {
+    if (!savedUserId) { setSeats([]); setOptions([]); return; }
+    setIsLoading(true);
+    try {
+      const result = await fetchUserSeats(savedUserId);
+      if (result?.success === false) throw new Error(result.error);
+      setSeats(result?.seats || []); setOptions(result?.options || []);
+    } catch (error) {
+      toastError(error?.message || "Failed to load seats.", "User Master Setup");
+    } finally { setIsLoading(false); }
+  }, [savedUserId]);
+
+  useEffect(() => { setPickerOpen(false); setPickedId(""); void loadSeats(); }, [loadSeats]);
+
+  const runSeatChange = useCallback(async (work, successMessage) => {
+    setIsBusy(true);
+    try {
+      const result = await work();
+      if (result?.success === false) throw new Error(result.error);
+      toastSuccess(successMessage, "User Master Setup");
+      setPickerOpen(false); setPickedId("");
+      await loadSeats();
+      if (typeof onSeatsChanged === "function") onSeatsChanged();
+    } catch (error) {
+      toastError(error?.message || "Failed to update seats.", "User Master Setup");
+    } finally { setIsBusy(false); }
+  }, [loadSeats, onSeatsChanged]);
+
+  if (!savedUserId) {
+    return <p className="small text-muted mb-3">Save this new user first, then add their seats.</p>;
+  }
+
+  const seatWhere = (s) => [s.company_label, s.department_name || "Company-level", s.branch].filter(Boolean).join(" · ");
+
+  return (
+    <div className="mb-3">
+      <div className="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <div>
+          <div className="fw-semibold">Seats</div>
+          <div className="small text-muted">Positions this person holds, in any company. Seat changes save right away.</div>
+        </div>
+        {panelEditable ? (
+          <Button type="button" variant="success" size="sm" onClick={() => setPickerOpen(true)} disabled={isBusy || isLoading || pickerOpen}>
+            Add to a position
+          </Button>
+        ) : null}
+      </div>
+
+      {pickerOpen ? (
+        <div className="d-flex gap-2 align-items-center mb-2">
+          <Input as="select" value={pickedId} onChange={(e) => setPickedId(e.target.value)} disabled={isBusy}>
+            <option value="">{options.length ? "Select a position" : "No open positions"}</option>
+            {options.map((o) => (
+              <option key={String(o.position_id)} value={String(o.position_id)}>{`${seatWhere(o)} · ${o.position_name}`}</option>
+            ))}
+          </Input>
+          <Button type="button" variant="primary" size="sm" disabled={!pickedId || isBusy}
+            onClick={() => runSeatChange(() => addUserSeat(savedUserId, pickedId), "Seat added.")}>Add</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={isBusy}
+            onClick={() => { setPickerOpen(false); setPickedId(""); }}>Cancel</Button>
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <p className="small text-muted mb-0">Loading seats...</p>
+      ) : seats.length === 0 ? (
+        <p className="small text-muted mb-0">No seats yet.</p>
+      ) : (
+        <div className="d-flex flex-column gap-2">
+          {seats.map((s) => (
+            <div key={String(s.position_id)} className="border rounded p-2 d-flex justify-content-between align-items-start gap-2">
+              <div>
+                <div className="fw-semibold">
+                  {s.position_name}
+                  {s.is_primary ? <span className="ms-2 small text-warning">★ Main seat</span> : null}
+                  {!s.is_open ? <span className="ms-2 small text-muted">(inactive)</span> : null}
+                </div>
+                <div className="small text-muted">{seatWhere(s)}</div>
+              </div>
+              {panelEditable ? (
+                <div className="d-flex gap-1 flex-shrink-0">
+                  {!s.is_primary && s.is_open ? (
+                    <Button type="button" variant="ghost" size="sm" disabled={isBusy}
+                      onClick={() => runSeatChange(() => makeMainSeat(savedUserId, s.position_id), "Main seat changed.")}>Make main</Button>
+                  ) : null}
+                  <Button type="button" variant="ghost" size="sm" className="text-danger" disabled={isBusy}
+                    onClick={() => setSeatToRemove(s)}>Remove</Button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal show={Boolean(seatToRemove)} onHide={() => setSeatToRemove(null)} title="Remove Seat"
+        footer={<><Button type="button" variant="ghost" onClick={() => setSeatToRemove(null)}>Keep Seat</Button>
+          <Button type="button" variant="danger" onClick={() => {
+            const seat = seatToRemove; setSeatToRemove(null);
+            if (seat) void runSeatChange(() => removeUserSeat(savedUserId, seat.position_id), "Seat removed.");
+          }}>Remove Seat</Button></>}>
+        <p className="mb-0">Remove this person from {seatToRemove?.position_name || "this position"}?</p>
+      </Modal>
+    </div>
+  );
+}
+
 function UserPanelSection({
   panelOpen, panelMode, isPanelLoading, panelDirty, panelEditable,
   canDeactivateCurrentUser, isStaging, isLoadingLookups, isSavingBatch,
@@ -418,6 +544,7 @@ function UserPanelSection({
   handleStatusChange, handleCompanyChange,
   startAccessCreate, cancelAccessEditor, submitAccessEditor,
   stagePanelChanges, restorePanelToBaseline, deactivateCurrentUser,
+  panelUserId, onSeatsChanged,
 }) {
   const activeTabMeta = TABS.find((t) => t.key === activeTab) || TABS[0];
 
@@ -494,19 +621,9 @@ function UserPanelSection({
             ) : null}
 
             {activeTab === "organization" ? (
-              <div className="row g-2">
-                <div className="col-12 col-md-6"><label className="form-label mb-1">Company</label>
-                  <Input as="select" value={asChoiceValue(form.comp_id)} onChange={(e) => handleCompanyChange(e.target.value)} disabled={!panelEditable || isPanelLoading}>
-                    <option value="">Select company</option>
-                    {(lookups?.companies || []).map((c) => <option key={String(c?.comp_id)} value={String(c?.comp_id)}>{c?.label}</option>)}
-                  </Input></div>
-                <div className="col-12 col-md-6"><label className="form-label mb-1">Department</label>
-                  <Input as="select" value={asChoiceValue(form.dept_id)} onChange={(e) => setForm((p) => ({ ...p, dept_id: normalizeOptionalText(e.target.value) }))} disabled={!panelEditable || isPanelLoading}>
-                    <option value="">Select department</option>
-                    {departmentsForCompany.map((d) => <option key={String(d?.dept_id)} value={String(d?.dept_id)}>{d?.label}</option>)}
-                  </Input></div>
-                <div className="col-12 col-md-6"><label className="form-label mb-1">Position</label>
-                  <Input value={form.position} onChange={(e) => setForm((p) => ({ ...p, position: e.target.value }))} disabled={!panelEditable || isPanelLoading} placeholder="Position" /></div>
+              <>
+              <UserSeatsSection userId={panelUserId} panelMode={panelMode} panelEditable={panelEditable} onSeatsChanged={onSeatsChanged} />
+              <div className="row g-2 pt-2 border-top">
                 <div className="col-12 col-md-6"><label className="form-label mb-1">Hire Date</label>
                   <Input type="date" value={form.hire_date} onChange={(e) => setForm((p) => ({ ...p, hire_date: e.target.value }))} disabled={!panelEditable || isPanelLoading} /></div>
                 <div className="col-12"><label className="form-label mb-1">Status</label>
@@ -515,6 +632,7 @@ function UserPanelSection({
                     {(lookups?.statuses || []).map((s) => <option key={String(s?.status_id)} value={String(s?.status_id)}>{s?.label}</option>)}
                   </Input></div>
               </div>
+              </>
             ) : null}
 
             {activeTab === "access" ? (
@@ -578,8 +696,7 @@ function UserPanelSection({
                           Deactivate User
                         </Button>
                       ) : (
-                        <Button type="button" variant="success" size="sm" onClick={() => { setForm((f) => ({ ...f, is_active: true, status_id: "1" })); }} disabled={isStaging || isSavingBatch}>
-                          Activate User
+                        <Button type="button" variant="success" size="sm"                         onClick={() => { setForm((f) => ({ ...f, is_active: true, status_id: activeStatusIdOf(lookups?.statuses, f.status_id) })); }} disabled={isStaging || isSavingBatch}>                          Activate User
                         </Button>
                       )}
                       <p className="small text-muted mt-1 mb-0">{form?.is_active ? "Deactivating will revoke all access mappings." : "Reactivate this user account."}</p>
@@ -687,6 +804,8 @@ export default function UserMasterSetupView({ users, totalUsers, lookups }) {
         submitAccessEditor={h.submitAccessEditor}
         stagePanelChanges={h.stagePanelChanges} restorePanelToBaseline={h.restorePanelToBaseline}
         deactivateCurrentUser={h.deactivateCurrentUser}
+        panelUserId={h.panelUserId}
+        onSeatsChanged={() => h.refreshUsers({ silent: true })}
       />
 
       <UserModalsSection

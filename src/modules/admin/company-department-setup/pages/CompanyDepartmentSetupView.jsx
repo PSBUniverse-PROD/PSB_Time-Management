@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Button, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
+import { Button, Input, Modal, toastError, toastSuccess } from "@/shared/components/ui";
 import {
   parseCompanyId, isSameId, compareText, normalizeText, mapCompanyRow, mapDepartmentRow,
   removeObjectKey, mergeUpdatePatch, appendUniqueId,
@@ -11,6 +11,19 @@ import {
   createEmptyCompanyChanges, createEmptyDepartmentChanges,
   executeBatchSave, remapDepartmentsByCompanyId,
 } from "../data/companyDepartmentSetup.data.js";
+import {
+  deleteOrgPositionAction,
+  loadOrgPositionsData,
+  moveOrgPositionAction,
+  saveOrgPositionAction,
+  setOrgPositionActiveAction,
+} from "../data/companyDepartmentSetup.actions.js";
+import PositionModal from "./PositionModal.jsx";
+import RanksModal from "./RanksModal.jsx";
+import OrgFlowSection, { COMPANY_LEVEL_KEY } from "./OrgFlowSection.jsx";
+import orgChartModule from "@/modules/admin/org-chart/index.js";
+
+const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "";
 
 // ═══════════════════════════════════════════════════════════
 //  HOOKS
@@ -608,26 +621,16 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
 // ═══════════════════════════════════════════════════════════
 
 
-function batchMarker(bs) {
-  const map = {
-    hardDeleted: { t: "Deleted", c: "psb-batch-marker psb-batch-marker-deleted" },
-    deleted: { t: "Deactivated", c: "psb-batch-marker psb-batch-marker-deleted" },
-    created: { t: "New", c: "psb-batch-marker psb-batch-marker-new" },
-    updated: { t: "Edited", c: "psb-batch-marker psb-batch-marker-edited" },
-  };
-  return map[bs] || { t: "", c: "" };
-}
-
 function CompanyDeptHeader({
   hasPendingChanges, pendingSummary, isSaving, isMutatingAction,
   handleSaveBatch, handleCancelBatch,
-  openAddCompanyDialog,
+  openAddCompanyDialog, onOpenRanks,
 }) {
   return (
     <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
       <div>
-        <h1 className="h3 mb-1">Configuration and Settings</h1>
-        <p className="text-muted mb-0">Manage setup tables and mapping assignments for Company-Department.</p>
+        <h1 className="h3 mb-1">Organization Setup</h1>
+        <p className="text-muted mb-0">Pick a company, then a department, then a position. The org chart is drawn from what you set here.</p>
       </div>
       <div className="d-flex flex-wrap align-items-center justify-content-end gap-2">
         <span className={`small ${hasPendingChanges ? "text-warning-emphasis fw-semibold" : "text-muted"}`}>
@@ -652,136 +655,13 @@ function CompanyDeptHeader({
           disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleSaveBatch}>Save Batch</Button>
         <Button type="button" size="sm" variant="ghost"
           disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleCancelBatch}>Cancel Batch</Button>
-        <Button type="button" size="sm" variant="success"
-          disabled={isSaving || isMutatingAction} onClick={openAddCompanyDialog}>+ Add Company</Button>
+        <Button type="button" size="sm" variant="secondary" onClick={onOpenRanks}>Ranks</Button>
+        <a href={ORG_CHART_PATH} className="btn btn-sm btn-outline-primary">Org Chart</a>
       </div>
     </div>
   );
 }
 
-function CompanyTableSection({
-  decoratedCompanies, decoratedDepartments, selectedCompany, expandedCompanyId, isSaving, isMutatingAction,
-  pendingDeactivatedCompanyIds, pendingHardDeletedCompanyIds, handleCompanyRowClick,
-  // Rows open/close on click, so editing happens in the Edit Company / Edit Department windows, never inline.
-  openEditCompanyDialog,
-  openToggleCompanyDialog, openDeactivateCompanyDialog, stageHardDeleteCompany, onUndoBatchAction,
-  openAddDepartmentDialog,
-  // department props
-  pendingDeactivatedDepartmentIds, pendingHardDeletedDepartmentIds,
-  openEditDepartmentDialog,
-  openToggleDepartmentDialog, openDeactivateDepartmentDialog, stageHardDeleteDepartment, onUndoBatchActionDept,
-}) {
-  const columns = useMemo(() => [
-    {
-      key: "comp_name", label: "Company Name", width: "26%", sortable: true,
-      render: (row) => {
-        const m = batchMarker(row?.__batchState || "");
-        const isSelected = isSameId(row?.comp_id, selectedCompany?.comp_id);
-        return (
-          <span className={isSelected ? "fw-semibold text-primary" : ""}>
-            {row?.comp_name || ""}
-            {m.t ? <span className={m.c}>{m.t}</span> : null}
-          </span>
-        );
-      },
-    },
-    { key: "comp_short_name", label: "Short Name", width: "18%", sortable: true, render: (row) => row?.comp_short_name || "" },
-    { key: "comp_email", label: "Email", width: "26%", sortable: true, render: (row) => row?.comp_email || "" },
-    { key: "comp_phone", label: "Phone", width: "18%", sortable: true, render: (row) => row?.comp_phone || "" },
-    {
-      key: "is_active_bool", label: "Active", width: "12%", sortable: true, align: "center",
-      render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} />,
-    },
-  ], [selectedCompany?.comp_id]);
-
-  const actions = useMemo(() => [
-    { key: "edit-company", label: "Edit", type: "secondary", icon: "pen",
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => openEditCompanyDialog(r) },
-    { key: "restore-company", label: "Restore", type: "secondary", icon: "rotate-left",
-      visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedCompanyIds.has(String(r?.comp_id ?? "")),
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => openToggleCompanyDialog(r) },
-    { key: "deactivate-company", label: "Deactivate", type: "secondary", icon: "ban",
-      visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedCompanyIds.has(String(r?.comp_id ?? "")),
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => openDeactivateCompanyDialog(r) },
-    { key: "delete-company", label: "Delete", type: "danger", icon: "trash",
-      confirm: true,
-      confirmMessage: (r) => `Permanently delete ${r?.comp_name || "this company"}? This action cannot be undone.`,
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => stageHardDeleteCompany(r) },
-    { key: "add-department", label: "+ Add Dept", type: "success", icon: "plus",
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: () => openAddDepartmentDialog() },
-  ], [isMutatingAction, isSaving, openAddDepartmentDialog, openDeactivateCompanyDialog, openEditCompanyDialog,
-    openToggleCompanyDialog, pendingDeactivatedCompanyIds, stageHardDeleteCompany]);
-
-  // ── Department columns for nested detail ──
-  const deptColumns = useMemo(() => [
-    {
-      key: "dept_name", label: "Department Name", width: "48%", sortable: true,
-      render: (row) => {
-        const m = batchMarker(row?.__batchState || "");
-        return (
-          <span>
-            {row?.dept_name || ""}
-            {m.t ? <span className={m.c}>{m.t}</span> : null}
-          </span>
-        );
-      },
-    },
-    { key: "dept_short_name", label: "Short Name", width: "30%", sortable: true, render: (row) => row?.dept_short_name || "" },
-    {
-      key: "is_active_bool", label: "Active", width: "22%", sortable: true, align: "center",
-      render: (row) => <StatusBadge status={row?.is_active_bool ? "active" : "inactive"} />,
-    },
-  ], []);
-
-  const deptActions = useMemo(() => [
-    { key: "edit-department", label: "Edit", type: "secondary", icon: "pen",
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => openEditDepartmentDialog(r) },
-    { key: "restore-department", label: "Restore", type: "secondary", icon: "rotate-left",
-      visible: (r) => !Boolean(r?.is_active_bool) || pendingDeactivatedDepartmentIds.has(String(r?.dept_id ?? "")),
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => openToggleDepartmentDialog(r) },
-    { key: "deactivate-department", label: "Deactivate", type: "secondary", icon: "ban",
-      visible: (r) => Boolean(r?.is_active_bool) && !pendingDeactivatedDepartmentIds.has(String(r?.dept_id ?? "")),
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => openDeactivateDepartmentDialog(r) },
-    { key: "delete-department", label: "Delete", type: "danger", icon: "trash",
-      confirm: true,
-      confirmMessage: (r) => `Permanently delete ${r?.dept_name || "this department"}? This action cannot be undone.`,
-      disabled: (r) => isSaving || isMutatingAction,
-      onClick: (r) => stageHardDeleteDepartment(r) },
-  ], [isMutatingAction, isSaving, openDeactivateDepartmentDialog, openEditDepartmentDialog,
-    openToggleDepartmentDialog, pendingDeactivatedDepartmentIds, stageHardDeleteDepartment]);
-
-  const renderCompanyDetail = useCallback(() => {
-    if (!selectedCompany) return null;
-    return (
-      <div>
-        <div className="d-flex align-items-center justify-content-between mb-2">
-          <h6 className="mb-0 small fw-semibold">Departments for: {selectedCompany.comp_name}</h6>
-        </div>
-        <TableZ columns={deptColumns} data={decoratedDepartments} rowIdKey="dept_id"
-          actions={deptActions} hideFooter
-          emptyMessage="No departments found for this company."
-          onUndoBatchAction={onUndoBatchActionDept} />
-      </div>
-    );
-  }, [deptActions, deptColumns, decoratedDepartments, onUndoBatchActionDept, selectedCompany]);
-
-  return (
-    <TableZ columns={columns} data={decoratedCompanies} rowIdKey="comp_id"
-      selectedRowId={expandedCompanyId} onRowClick={handleCompanyRowClick}
-      actions={actions} hideFooter
-      renderDetail={renderCompanyDetail}
-      emptyMessage="No companies found."
-      onUndoBatchAction={onUndoBatchAction} />
-  );
-}
 
 function CompanyDeptDialog({
   dialog, companyDraft, departmentDraft, isMutatingAction,
@@ -896,38 +776,117 @@ function CompanyDeptDialog({
 //  MAIN VIEW
 // ═══════════════════════════════════════════════════════════
 
-export default function CompanyDepartmentSetupView({ companies, departments, initialSelectedCompanyId }) {
+export default function CompanyDepartmentSetupView({ companies, departments, initialSelectedCompanyId, positions = [], users = [], ranks = [] }) {
   const h = useCompanyDepartmentSetup({ companies, departments, initialSelectedCompanyId });
+  const [org, setOrg] = useState({ positions, users, ranks });
+  const [showRanks, setShowRanks] = useState(false);
+
+  useEffect(() => {
+    setOrg({ positions, users, ranks });
+  }, [positions, users, ranks]);
+  const [positionModal, setPositionModal] = useState(null);
+  const [isPositionBusy, setIsPositionBusy] = useState(false);
+  // Flow selection: department (or COMPANY_LEVEL_KEY) and position inside the selected company.
+  const [selectedDeptKey, setSelectedDeptKey] = useState(null);
+  const [selectedPositionId, setSelectedPositionId] = useState(null);
+  const selectedCompanyId = h.selectedCompany?.comp_id ?? null;
+
+  useEffect(() => {
+    setSelectedDeptKey(null);
+    setSelectedPositionId(null);
+  }, [selectedCompanyId]);
+
+  const reloadOrg = useCallback(async () => {
+    const next = await loadOrgPositionsData();
+    setOrg({ positions: next?.positions || [], users: next?.users || [], ranks: next?.ranks || [] });
+  }, []);
+
+  const companyPositions = useMemo(
+    () => org.positions.filter((p) => isSameId(p?.comp_id, h.selectedCompany?.comp_id)),
+    [h.selectedCompany?.comp_id, org.positions]);
+  const savedCompanyDepartments = useMemo(
+    () => (h.decoratedDepartments || []).filter((d) => !isTempDepartmentId(d?.dept_id)),
+    [h.decoratedDepartments]);
+
+  const runPositionChange = useCallback(async (work, message) => {
+    if (isPositionBusy) return;
+    setIsPositionBusy(true);
+    try {
+      const result = await work();
+      if (result && result.success === false) throw new Error(result.error || "Failed to update the position.");
+      await reloadOrg();
+      toastSuccess(message, "Positions");
+    } catch (error) {
+      toastError(error?.message || "Failed to update the position.");
+    } finally {
+      setIsPositionBusy(false);
+    }
+  }, [isPositionBusy, reloadOrg]);
+
+  const handlePositionSaved = useCallback(async (message) => {
+    await reloadOrg();
+    setPositionModal(null);
+    toastSuccess(message, "Positions");
+  }, [reloadOrg]);
 
   return (
-    <main className="container py-4">
+    <main className="container-fluid py-4 px-3 px-lg-4">
       <CompanyDeptHeader
         hasPendingChanges={h.hasPendingChanges} pendingSummary={h.pendingSummary}
         isSaving={h.isSaving} isMutatingAction={h.isMutatingAction}
         handleSaveBatch={h.handleSaveBatch} handleCancelBatch={h.handleCancelBatch}
         openAddCompanyDialog={h.openAddCompanyDialog}
+        onOpenRanks={() => setShowRanks(true)}
       />
 
-      <CompanyTableSection
+      <OrgFlowSection
         decoratedCompanies={h.decoratedCompanies} decoratedDepartments={h.decoratedDepartments}
-        selectedCompany={h.selectedCompany} expandedCompanyId={h.expandedCompanyId}
+        selectedCompany={h.selectedCompany}
         isSaving={h.isSaving} isMutatingAction={h.isMutatingAction}
         pendingDeactivatedCompanyIds={h.pendingDeactivatedCompanyIds}
-        pendingHardDeletedCompanyIds={h.pendingHardDeletedCompanyIds}
-        handleCompanyRowClick={h.handleCompanyRowClick}
+        pendingDeactivatedDepartmentIds={h.pendingDeactivatedDepartmentIds}
+        onSelectCompany={h.handleCompanyRowClick}
+        openAddCompanyDialog={h.openAddCompanyDialog}
         openEditCompanyDialog={h.openEditCompanyDialog}
         openToggleCompanyDialog={h.openToggleCompanyDialog}
         openDeactivateCompanyDialog={h.openDeactivateCompanyDialog}
         stageHardDeleteCompany={h.stageHardDeleteCompany}
-        onUndoBatchAction={h.unstageHardDeleteCompany}
+        unstageHardDeleteCompany={h.unstageHardDeleteCompany}
         openAddDepartmentDialog={h.openAddDepartmentDialog}
-        pendingDeactivatedDepartmentIds={h.pendingDeactivatedDepartmentIds}
-        pendingHardDeletedDepartmentIds={h.pendingHardDeletedDepartmentIds}
         openEditDepartmentDialog={h.openEditDepartmentDialog}
         openToggleDepartmentDialog={h.openToggleDepartmentDialog}
         openDeactivateDepartmentDialog={h.openDeactivateDepartmentDialog}
         stageHardDeleteDepartment={h.stageHardDeleteDepartment}
-        onUndoBatchActionDept={h.unstageHardDeleteDepartment}
+        unstageHardDeleteDepartment={h.unstageHardDeleteDepartment}
+        allPositions={org.positions}
+        companyPositions={companyPositions}
+        isPositionBusy={isPositionBusy}
+        ranks={org.ranks}
+        selectedDeptKey={selectedDeptKey}
+        onSelectDept={(key) => { setSelectedDeptKey(key); setSelectedPositionId(null); }}
+        selectedPositionId={selectedPositionId}
+        onSelectPosition={(id) => setSelectedPositionId(id)}
+        onAddPosition={() => setPositionModal({ position: null })}
+        onEditPosition={(row) => setPositionModal({ position: row })}
+        onTogglePosition={(row, nextActive) => runPositionChange(
+          () => setOrgPositionActiveAction(row.position_id, nextActive),
+          nextActive ? "Position restored." : "Position deactivated.")}
+        onDeletePosition={(row) => runPositionChange(
+          () => deleteOrgPositionAction(row.position_id), "Position deleted.")}
+        onMovePosition={(row, direction) => runPositionChange(
+          () => moveOrgPositionAction(row.position_id, direction), "Order updated.")}
+        onRemovePerson={(row, userId) => runPositionChange(
+          () => saveOrgPositionAction({
+            position_id: row.position_id,
+            comp_id: row.comp_id,
+            dept_id: row.dept_id,
+            position_name: row.position_name,
+            branch: row.branch,
+            chart_level: row.chart_level,
+            reports_to_ids: row.reports_to_ids || [],
+            user_ids: (row.holders || []).map((x) => x.user_id).filter((id) => !isSameId(id, userId)),
+          }),
+          "Person removed.")}
       />
 
       <CompanyDeptDialog
@@ -939,6 +898,23 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         submitAddDepartment={h.submitAddDepartment} submitEditDepartment={h.submitEditDepartment}
         submitToggleDepartment={h.submitToggleDepartment} submitDeactivateDepartment={h.submitDeactivateDepartment}
       />
+
+      {positionModal && h.selectedCompany ? (
+        <PositionModal
+          key={String(positionModal.position?.position_id ?? "new")}
+          company={h.selectedCompany}
+          position={positionModal.position}
+          departments={savedCompanyDepartments}
+          positions={companyPositions}
+          users={org.users}
+          ranks={org.ranks}
+          defaultDeptId={selectedDeptKey && selectedDeptKey !== COMPANY_LEVEL_KEY ? selectedDeptKey : ""}
+          onClose={() => setPositionModal(null)}
+          onSaved={handlePositionSaved}
+        />
+      ) : null}
+
+      <RanksModal show={showRanks} ranks={org.ranks} onClose={() => setShowRanks(false)} onChanged={reloadOrg} />
     </main>
   );
 }

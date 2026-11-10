@@ -1,6 +1,8 @@
 "use server";
 
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import { requireUserMasterEditor } from "@/modules/admin/company-department-setup/data/orgAccess.server.js";
+import { refreshUserSeats } from "@/modules/admin/company-department-setup/data/orgSeats.server.js";
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -420,8 +422,9 @@ async function resolveUniqueUsername(supabase, preferred, excludeUserId = null) 
 // ─── Writable payload builder ─────────────────────────────
 
 const USER_WRITABLE_FIELDS = [
+  // comp_id, dept_id and position are not here: they follow the user's main seat (refreshUserSeats).
   "auth_user_id", "email", "username", "first_name", "middle_name", "last_name",
-  "phone", "address", "position", "hire_date", "comp_id", "dept_id", "status_id", "is_active",
+  "phone", "address", "hire_date", "status_id", "is_active",
 ];
 
 function buildWritablePayload(source, { includeDefaultActive } = {}) {
@@ -716,4 +719,129 @@ export async function saveUserMasterBatch(pendingBatch) {
   await upsertAccessRows(supabase, additions);
 
   return createdIds;
+}
+
+// ─── Seats (positions a user holds) ───────────────────────
+// A seat is a row in psb_m_userposition. Seats save straight away (not part
+// of Save Batch). After every change the user's company, department and
+// position are copied from their main seat (refreshUserSeats).
+// These return { success, error }: Next.js hides thrown messages in production.
+
+function toSeatId(value) {
+  const n = Number(normalizeText(value));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function seatResult(work, fallback) {
+  try {
+    await requireUserMasterEditor();
+    const data = await work();
+    return { success: true, ...(data && typeof data === "object" ? data : {}) };
+  } catch (error) {
+    return { success: false, error: error?.message || fallback };
+  }
+}
+
+/** The user's seats, plus the open positions they could be added to. */
+export async function loadUserSeatsAction(userId) {
+  return seatResult(async () => {
+    const uid = toSeatId(userId);
+    if (!uid) throw new Error("User is required.");
+    const supabase = getSupabaseAdmin();
+    const [seatsRes, positionsRes, companiesRes, departmentsRes] = await Promise.all([
+      supabase.from("psb_m_userposition").select("position_id, is_primary").eq("user_id", uid).eq("is_active", true),
+      supabase.from("psb_s_position").select("position_id, comp_id, dept_id, position_name, branch, is_active"),
+      supabase.from("psb_s_company").select("comp_id, comp_name, short_name, is_active"),
+      supabase.from("psb_s_department").select("dept_id, dept_name, is_active"),
+    ]);
+    const failed = seatsRes.error || positionsRes.error || companiesRes.error || departmentsRes.error;
+    if (failed) throw new Error(failed.message);
+
+    const companyById = new Map(ensureArray(companiesRes.data).map((c) => [String(c.comp_id), c]));
+    const deptById = new Map(ensureArray(departmentsRes.data).map((d) => [String(d.dept_id), d]));
+    const positionById = new Map(ensureArray(positionsRes.data).map((p) => [String(p.position_id), p]));
+    const describe = (p) => {
+      const company = companyById.get(String(p.comp_id));
+      const dept = hasValue(p.dept_id) ? deptById.get(String(p.dept_id)) : null;
+      return {
+        position_id: p.position_id,
+        position_name: p.position_name || "",
+        company_label: company?.short_name || company?.comp_name || "",
+        department_name: dept?.dept_name || "",
+        branch: p.branch || "",
+        // Open = the position, its company and its department (if any) are all active.
+        is_open: Boolean(p.is_active) && company?.is_active !== false && (!dept || dept.is_active !== false),
+      };
+    };
+    const byLabel = (a, b) => a.company_label.localeCompare(b.company_label)
+      || a.department_name.localeCompare(b.department_name)
+      || a.position_name.localeCompare(b.position_name);
+
+    const seats = ensureArray(seatsRes.data)
+      .filter((s) => positionById.has(String(s.position_id)))
+      .map((s) => ({ ...describe(positionById.get(String(s.position_id))), is_primary: Boolean(s.is_primary) }))
+      .sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || byLabel(a, b));
+    const taken = new Set(seats.map((s) => String(s.position_id)));
+    const options = ensureArray(positionsRes.data)
+      .map(describe)
+      .filter((p) => p.is_open && !taken.has(String(p.position_id)))
+      .sort(byLabel);
+    return { seats, options };
+  }, "Failed to load seats.");
+}
+
+/** Put the user in a position. Their first seat becomes their main seat. */
+export async function addUserSeatAction(userId, positionId) {
+  return seatResult(async () => {
+    const uid = toSeatId(userId), pid = toSeatId(positionId);
+    if (!uid || !pid) throw new Error("User and position are required.");
+    const supabase = getSupabaseAdmin();
+    const { data: position, error: positionError } = await supabase.from("psb_s_position")
+      .select("position_id, is_active").eq("position_id", pid).maybeSingle();
+    if (positionError) throw new Error(positionError.message);
+    if (!position) throw new Error("That position no longer exists. Refresh the page.");
+    if (!position.is_active) throw new Error("That position is inactive.");
+    const { data: mains, error: mainError } = await supabase.from("psb_m_userposition")
+      .select("position_id").eq("user_id", uid).eq("is_primary", true).eq("is_active", true);
+    if (mainError) throw new Error(mainError.message);
+    const { error } = await supabase.from("psb_m_userposition").upsert(
+      { user_id: uid, position_id: pid, is_active: true, is_primary: ensureArray(mains).length === 0 },
+      { onConflict: "user_id,position_id" },
+    );
+    if (error) throw new Error(error.message || "Failed to add the seat.");
+    await refreshUserSeats(supabase, [uid]);
+  }, "Failed to add the seat.");
+}
+
+/** Make one of the user's seats their main seat. */
+export async function makeMainSeatAction(userId, positionId) {
+  return seatResult(async () => {
+    const uid = toSeatId(userId), pid = toSeatId(positionId);
+    if (!uid || !pid) throw new Error("User and position are required.");
+    const supabase = getSupabaseAdmin();
+    const { data: seat, error: seatError } = await supabase.from("psb_m_userposition")
+      .select("is_active").eq("user_id", uid).eq("position_id", pid).maybeSingle();
+    if (seatError) throw new Error(seatError.message);
+    if (!seat?.is_active) throw new Error("That seat no longer exists. Refresh the page.");
+    // Only one main seat per user: clear first, then set.
+    const { error: clearError } = await supabase.from("psb_m_userposition")
+      .update({ is_primary: false }).eq("user_id", uid).eq("is_primary", true);
+    if (clearError) throw new Error(clearError.message);
+    const { error } = await supabase.from("psb_m_userposition")
+      .update({ is_primary: true }).eq("user_id", uid).eq("position_id", pid);
+    if (error) throw new Error(error.message || "Failed to change the main seat.");
+    await refreshUserSeats(supabase, [uid]);
+  }, "Failed to change the main seat.");
+}
+
+/** Take the user out of a position. If it was their main seat, another seat takes over. */
+export async function removeUserSeatAction(userId, positionId) {
+  return seatResult(async () => {
+    const uid = toSeatId(userId), pid = toSeatId(positionId);
+    if (!uid || !pid) throw new Error("User and position are required.");
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase.from("psb_m_userposition").delete().eq("user_id", uid).eq("position_id", pid);
+    if (error) throw new Error(error.message || "Failed to remove the seat.");
+    await refreshUserSeats(supabase, [uid]);
+  }, "Failed to remove the seat.");
 }

@@ -7,11 +7,14 @@ import ImpersonatePanel from "../components/ImpersonatePanel";
 import { getSupabase } from "@/core/supabase/client";
 import { toastError, toastInfo, toastSuccess } from "@/shared/utils/toast";
 import { Badge, StatusBadge } from "@/shared/components/ui";
+import orgChartModule from "@/modules/admin/org-chart/index.js";
 import {
   hasText, getLabel, buildInitials, statusIsActive, buildRequestUpdateMailto,
   buildProfile, buildRelations, buildRoleGroupsByApp,
   MIN_PASSWORD_LENGTH, PASSWORD_NUMBER_OR_SYMBOL_REGEX,
 } from "../data/profile.data";
+
+const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "";
 
 // ── hook ───────────────────────────────────────────────────
 function useProfile() {
@@ -132,6 +135,9 @@ function ProfileSocialCard({
               Request Update
             </Button>
           ) : null}
+          <Button as="a" href={`${ORG_CHART_PATH}?focus=me`} size="sm" variant="outline-primary">
+            See my organization chart
+          </Button>
           <Button type="button" variant="outline-secondary" size="sm"
             onClick={() => void copyToClipboard(profile.email, "Email")}>
             Copy Email

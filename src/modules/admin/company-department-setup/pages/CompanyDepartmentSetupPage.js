@@ -1,5 +1,5 @@
 import CompanyDepartmentSetupView from "./CompanyDepartmentSetupView";
-import { loadCompanyDepartmentSetupData } from "../data/companyDepartmentSetup.actions.js";
+import { loadCompanyDepartmentSetupData, loadOrgPositionsData } from "../data/companyDepartmentSetup.actions.js";
 
 function parseCompanyId(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -11,7 +11,10 @@ export default async function CompanyDepartmentSetupPage({ searchParams }) {
   const resolvedSearchParams = await searchParams;
 
   try {
-    const { companies, departments } = await loadCompanyDepartmentSetupData();
+    const [{ companies, departments }, { positions, users, ranks }] = await Promise.all([
+      loadCompanyDepartmentSetupData(),
+      loadOrgPositionsData(),
+    ]);
 
     const initialSelectedCompanyId =
       parseCompanyId(resolvedSearchParams?.company)
@@ -23,6 +26,9 @@ export default async function CompanyDepartmentSetupPage({ searchParams }) {
         companies={companies}
         departments={departments}
         initialSelectedCompanyId={initialSelectedCompanyId}
+        positions={positions}
+        users={users}
+        ranks={ranks}
       />
     );
   } catch (error) {
