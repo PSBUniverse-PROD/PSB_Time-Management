@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "react-bootstrap";
 import Form from "react-bootstrap/Form";
-import { IS_MODULE } from "@/core/sso-client";
+import { IS_MODULE, SSO_ENABLED, validateSessionToken } from "@/core/sso-client";
+import { canSeeDeveloperTabsAction } from "@/core/auth/navAccess.actions.js";
 
 // Core's own tabs are plain paths, so they stay on whichever site is serving
 // the page (localhost, dev or prod). A module app runs on another host, so
@@ -77,35 +78,6 @@ function isDocsPath(pathname) {
   return path === "/psbpages/documentation" || path.startsWith("/psbpages/documentation/");
 }
 
-function normalizeAccessToken(value) {
-  return String(value || "").trim().toUpperCase();
-}
-
-function hasExampleNavAccess(roles) {
-  if (!Array.isArray(roles) || roles.length === 0) {
-    return false;
-  }
-
-  return roles.some((mapping) => {
-    if (!mapping) {
-      return false;
-    }
-
-    const appToken =
-      normalizeAccessToken(mapping.app_name) ||
-      normalizeAccessToken(mapping.app_code) ||
-      normalizeAccessToken(mapping.app_key) ||
-      normalizeAccessToken(mapping.app_id);
-    const roleToken =
-      normalizeAccessToken(mapping.role_name) ||
-      normalizeAccessToken(mapping.role_code) ||
-      normalizeAccessToken(mapping.role_key) ||
-      normalizeAccessToken(mapping.role_id);
-
-    return appToken === "PSBUNIVERSE" && roleToken === "MASTER";
-  });
-}
-
 export default function Header({
   user,
   roles = [],
@@ -132,7 +104,22 @@ export default function Header({
     return user?.username || user?.email || "User";
   }, [user]);
 
-  const canSeeExamples = useMemo(() => hasExampleNavAccess(roles), [roles]);
+  // Example / Docs tabs: shown when the user's role is given a card that opens
+  // the Examples page (Card Module Setup). Hidden until the answer arrives.
+  //  - Module apps (signed in through core): core answers in the session check
+  //    they already make (canSeeDeveloperTabs from /api/auth/introspect).
+  //  - Core: ask the server directly.
+  const [canSeeExamples, setCanSeeExamples] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const check = IS_MODULE && SSO_ENABLED
+      ? validateSessionToken().then((session) => session?.canSeeDeveloperTabs === true)
+      : canSeeDeveloperTabsAction();
+    Promise.resolve(check)
+      .then((allowed) => { if (active) setCanSeeExamples(Boolean(allowed)); })
+      .catch(() => { if (active) setCanSeeExamples(false); });
+    return () => { active = false; };
+  }, [user?.user_id]);
 
   const tabs = useMemo(() => {
     // These tabs represent the main PSBUniverse hub. In a module app

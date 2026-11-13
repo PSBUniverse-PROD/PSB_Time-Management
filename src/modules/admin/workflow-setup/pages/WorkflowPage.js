@@ -10,7 +10,19 @@ import { loadWorkflowOverviewData } from "../data/workflow.actions";
 export const dynamic = "force-dynamic";
 
 export default async function WorkflowPage() {
-  const data = await loadWorkflowOverviewData();
+  let data;
+  try {
+    data = await loadWorkflowOverviewData();
+  } catch (error) {
+    return (
+      <main className="container py-4">
+        <div className="notice-banner notice-banner-danger mb-0">
+          <strong className="d-block">Can&apos;t open Workflow Setup.</strong>
+          <span>{error?.message || "Unknown error"}</span>
+        </div>
+      </main>
+    );
+  }
 
   return <WorkflowView {...data} />;
 }

@@ -113,7 +113,7 @@ async function loadDealerContext({ withPasswordHash = false } = {}) {
   if (!session?.dealerId) return null;
 
   // "Login as dealer": the staff view ends as soon as the staff member loses
-  // the admin-enroll / admin-master role.
+  // access to Dealer Master Setup (its card in Card Module Setup).
   const staff = session.staff || null;
   if (staff && !(await userHasDealerAdminRole(staff.userId))) return null;
 

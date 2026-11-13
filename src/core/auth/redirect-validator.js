@@ -4,6 +4,9 @@
  * against a whitelist of allowed subdomains and patterns.
  */
 
+import { routePathOf, shortPathOf } from "@/core/routes.js";
+import loginModule from "@/modules/psbpages/login/index.js";
+
 const CORE_PORTAL_URL = process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com";
 
 // ── Configuration ───────────────────────────────────────────
@@ -12,7 +15,10 @@ const ALLOWED_HOST_SUFFIXES = [
   ".vercel.app", // All Vercel deployments (dev, preview, CI, etc.)
 ];
 
-const LOGIN_PATHS = ["/login", "/psbpages/login"];
+// The login page's address (from its module) and its short form (/psbpages/x → /x).
+const LOGIN_PAGE_PATH = routePathOf(loginModule, "LoginPage");
+export const LOGIN_SHORT_PATH = shortPathOf(LOGIN_PAGE_PATH);
+const LOGIN_PATHS = [...new Set([LOGIN_SHORT_PATH, LOGIN_PAGE_PATH].filter(Boolean))];
 
 // ── Public API ──────────────────────────────────────────────
 
@@ -111,7 +117,7 @@ export function validateRedirectUrl(redirectUrl, fallbackUrl = "/dashboard") {
  * @returns {string} Login URL with optional redirect parameter
  */
 export function buildLoginUrl(returnPath) {
-  const loginUrl = new URL("/login", CORE_PORTAL_URL);
+  const loginUrl = new URL(LOGIN_SHORT_PATH, CORE_PORTAL_URL);
 
   if (returnPath) {
     const safeRedirect = validateRedirectUrl(returnPath);

@@ -5,6 +5,9 @@ import Image from "next/image";
 import dealerIcon from "@/styles/psb_dealer_icon.svg";
 import "../dealerPortal.css";
 import DealerErrorHost from "./DealerErrorHost";
+import { routePathOf } from "@/core/routes.js";
+import dealerPortalModule from "../index.js";
+import dealerMasterSetupModule from "@/modules/admin/dealer-master-setup/index.js";
 
 const ACCOUNT_NAV = [
   { key: "overview", label: "Overview" },
@@ -33,7 +36,9 @@ export default function DealerShell({ dealer, username, staff = null, supportEma
       await fetch("/api/dealer/logout", { method: "POST" });
     } finally {
       // Only the dealer session is cleared; staff stay signed in to PSBUniverse.
-      window.location.assign(staff ? "/admin/dealer-master-setup" : "/dealer/login");
+      window.location.assign(staff
+        ? routePathOf(dealerMasterSetupModule, "DealerMasterSetupPage")
+        : routePathOf(dealerPortalModule, "DealerLoginPage"));
     }
   }
 

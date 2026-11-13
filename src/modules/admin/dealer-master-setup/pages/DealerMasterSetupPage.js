@@ -6,9 +6,9 @@ import { loadPsbContact } from "@/modules/dealer/data/psbContact";
 /**
  * Server page for Dealer Master Setup.
  *
- * Only users with the admin-enroll or admin-master role see the dealers;
- * everyone else gets a short notice. Every server action checks the role
- * again on its own.
+ * Only users whose role is given this page's card in Card Module Setup see the
+ * dealers; everyone else gets a short notice. Every server action checks again
+ * on its own.
  */
 export default async function DealerMasterSetupPage() {
   if (!(await getDealerAdminSession())) {

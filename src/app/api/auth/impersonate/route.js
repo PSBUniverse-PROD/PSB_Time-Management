@@ -10,7 +10,8 @@
  * already-signed-in user with the right role swaps into the target's session.
  *
  * Security gate (server-side only):
- * The caller must hold a valid `psb_session` cookie AND an ACTIVE "CORE MANAGER"
+ * The caller must hold a valid `psb_session` cookie AND a role that is given the
+ * User Master Setup card in Card Module Setup (no role names in code). Previously:
  * role, resolved live through psb_m_userapproleaccess -> psb_s_role. Because the
  * check happens here on the server, nothing about it is sent to the browser: the
  * page can only ask "may I?", never grant itself permission. A user whose role
@@ -22,6 +23,8 @@
 import { getSupabaseAdmin } from '@/core/supabase/admin';
 import { createUserSession, isSessionInvalidated } from '@/core/auth/session.service';
 import { verifyToken } from '@/core/auth/jwt.utils';
+import { userIdCanOpenPage } from '@/core/auth/pageAccess.server.js';
+import userMasterSetupModule from '@/modules/admin/user-master-setup/index.js';
 import {
   getPSBSessionCookieFromRequest,
   getPSBSessionCookieHeader,
@@ -47,12 +50,7 @@ function json(body, status) {
   });
 }
 
-/**
- * The role allowed to impersonate. Override with IMPERSONATION_REQUIRED_ROLE if
- * the role is ever renamed in psb_s_role, so no code change is needed.
- * Matched case-insensitively against psb_s_role.role_name.
- */
-const REQUIRED_ROLE_NAME = process.env.IMPERSONATION_REQUIRED_ROLE || 'CORE MANAGER';
+// Who may impersonate: whoever may open User Master Setup (its card in Card Module Setup).
 
 function isActiveRow(record) {
   const value = record?.is_active;
@@ -99,48 +97,16 @@ async function resolveImpersonatorSession(request) {
 }
 
 /**
- * Check whether a verified session belongs to a user with an active
- * CORE MANAGER role. Active flags are normalized like the profile bootstrap,
- * which supports boolean, numeric, and common text representations.
- *
- * The user's own roles are re-read from the database on every call rather than
- * trusted from the JWT, so revoking the role takes effect immediately instead of
- * waiting for the session to expire.
+ * Whether a verified session's user may impersonate: their role must be given
+ * the User Master Setup card in Card Module Setup.
  * @param {Object} payload - Verified session payload
- * @returns {Promise<boolean>} True when the caller may impersonate
+ * @returns {Promise<{allowed: boolean, reason: string|null}>}
  */
 async function getCallerImpersonationAccess(payload) {
   if (!payload?.userId) return { allowed: false, reason: 'session_user_missing' };
-
-  const supabaseAdmin = getSupabaseAdmin();
-
-  // The caller's active app-role assignments.
-  const { data: accessRows, error: accessError } = await supabaseAdmin
-    .from('psb_m_userapproleaccess')
-    .select('role_id, is_active')
-    .eq('user_id', payload.userId);
-  if (accessError) throw accessError;
-
-  const roleIds = [...new Set((accessRows || [])
-    .filter(isActiveRow)
-    .map((r) => r.role_id)
-    .filter(Boolean))];
-  if (roleIds.length === 0) return { allowed: false, reason: 'no_active_assignments' };
-
-  // Does any of those roles resolve to an active "CORE MANAGER" role?
-  const { data: roleRows, error: roleError } = await supabaseAdmin
-    .from('psb_s_role')
-    .select('role_id, role_name, is_active')
-    .in('role_id', roleIds);
-  if (roleError) throw roleError;
-
-  const requiredRoleName = REQUIRED_ROLE_NAME.trim().toLocaleLowerCase();
-  const requiredRoles = (Array.isArray(roleRows) ? roleRows : []).filter((role) =>
-    String(role?.role_name || '').trim().toLocaleLowerCase() === requiredRoleName,
-  );
-  if (requiredRoles.length === 0) return { allowed: false, reason: 'required_role_not_assigned' };
-  if (!requiredRoles.some(isActiveRow)) return { allowed: false, reason: 'required_role_inactive' };
-  return { allowed: true, reason: null };
+  // Re-read from the database on every call: removing the card or the role works at once.
+  const allowed = await userIdCanOpenPage(payload.userId, userMasterSetupModule);
+  return allowed ? { allowed: true, reason: null } : { allowed: false, reason: 'no_access' };
 }
 
 async function callerCanImpersonate(payload) {

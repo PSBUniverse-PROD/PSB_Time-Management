@@ -6,6 +6,8 @@ import { deleteDealerAction, enrollDealerAction, setDealerActiveAction } from ".
 import DealerLoginModal from "./DealerLoginModal.jsx";
 import DealerErrorHost from "@/modules/dealer/components/DealerErrorHost";
 import { errorFromResult, showDealerError } from "@/modules/dealer/data/dealerErrorReport";
+import { routePathOf } from "@/core/routes.js";
+import dealerPortalModule from "@/modules/dealer/index.js";
 import {
   EMPTY_DIALOG,
   compareText,
@@ -141,7 +143,7 @@ export function useDealerMasterSetup({ dealers = [] }) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result?.success) throw errorFromResult(result, "Unable to log in as this dealer.");
-      window.location.assign("/dealer/account");
+      window.location.assign(routePathOf(dealerPortalModule, "DealerAccountPage"));
     } catch (error) {
       showDealerError(error, { title: "Login as dealer", action: `Logging in as dealer ${row.dealer_code || ""}` });
       setIsMutatingAction(false);

@@ -15,6 +15,7 @@ import { isSessionInvalidated } from '@/core/auth/session.service';
 import { getPSBSessionCookieFromRequest } from '@/core/auth/cookies.utils';
 import { getAuthCorsHeaders as corsHeaders } from '@/core/auth/cors.utils';
 import { getSupabaseAdmin } from '@/core/supabase/admin';
+import { userCanSeeDeveloperTabs } from '@/core/auth/developerTabs.server.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,6 +75,9 @@ export async function GET(request) {
 
     const modules = Array.isArray(payload.modules) ? payload.modules.map(String) : [];
     const roles = Array.isArray(payload.roles) ? payload.roles.map(String) : [];
+    // Module apps can't run the card check themselves (they hold no secret), so
+    // core answers it here: may this user see the Example / Docs tabs?
+    const canSeeDeveloperTabs = await userCanSeeDeveloperTabs(payload.userId);
 
     const moduleKey = readModuleKey(request);
     const { appId } = await resolveAppIdByModuleKey(moduleKey);
@@ -108,6 +112,7 @@ export async function GET(request) {
         modules,
         roles,
         expiresAt: payload.expiresAt,
+        canSeeDeveloperTabs,
       },
       200,
     );

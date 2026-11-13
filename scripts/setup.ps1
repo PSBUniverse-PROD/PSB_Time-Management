@@ -71,6 +71,7 @@ if ($isModuleRepo) {
 # ── 2. npm install ──────────────────────────────────────────────
 
 $installNeeded = $false
+$coreDepsAdded = $false
 
 # Module repos: core modules import packages listed in core's package.json.
 # Add any that this repo's package.json is missing (add-only, see the script).
@@ -82,6 +83,7 @@ if ($isModuleRepo) {
         node scripts/sync-core-deps.mjs
         if ($LASTEXITCODE -eq 10) {
             $installNeeded = $true
+            $coreDepsAdded = $true
         } elseif ($LASTEXITCODE -ne 0) {
             Write-Host "  ERROR: core dependency check failed." -ForegroundColor Red
             exit 1
@@ -103,12 +105,40 @@ if (-not $installNeeded) {
     }
 }
 
+# A package-lock.json with leftover merge-conflict lines can't be read by npm: npm
+# then rebuilds it from scratch and packages jump to newer versions on every clone.
+if (Test-Path "package-lock.json") {
+    $lockText = Get-Content "package-lock.json" -Raw
+    if ($lockText -match '(?m)^(<<<<<<<|=======|>>>>>>>)') {
+        Write-Host "[2/5] ERROR: package-lock.json still has merge-conflict lines (<<<<<<< / ======= / >>>>>>>)." -ForegroundColor Red
+        Write-Host "  Fix it once: remove those lines, run 'npm install', then commit package-lock.json." -ForegroundColor Yellow
+        exit 1
+    }
+}
+
 if ($installNeeded) {
     Write-Host "`n[2/5] Installing packages..." -ForegroundColor Green
-    npm install
+    $lockHashBefore = if (Test-Path "package-lock.json") { (Get-FileHash "package-lock.json").Hash } else { "" }
+
+    if ($coreDepsAdded -or -not (Test-Path "package-lock.json")) {
+        # New dependencies (or no lock yet): the lock has to be updated.
+        npm install
+    } else {
+        # Install exactly what package-lock.json lists, without rewriting it.
+        npm ci
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  The lockfile could not be used as-is, so the script is falling back to npm install." -ForegroundColor Yellow
+            npm install
+        }
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ERROR: npm install failed." -ForegroundColor Red
         exit 1
+    }
+
+    $lockHashAfter = if (Test-Path "package-lock.json") { (Get-FileHash "package-lock.json").Hash } else { "" }
+    if ($lockHashBefore -ne $lockHashAfter) {
+        Write-Host "  package-lock.json changed. Commit it together with package.json so the next clone installs the same versions." -ForegroundColor Yellow
     }
     $allGood = $false
 } else {
@@ -260,15 +290,22 @@ if ($ssoIssues.Count -gt 0) {
 # ── 5. VS Code read-only rules (module repos only) ─────────────
 #
 # Strategy: lock EVERYTHING, then unlock only the jr dev's own module folders.
-# setup.ps1 scans src/modules/ and treats any folder that is NOT a core group
-# (admin, psbpages) as the dev's own module — those get excluded from readonly.
+# setup.ps1 scans src/modules/ and treats any folder that core itself does NOT
+# have (read from the fetched core remote) as the dev's own module — those get
+# excluded from readonly. New core folders (e.g. dealer) stay locked automatically.
 
 $settingsPath = ".vscode/settings.json"
 
+# Core's own module folders, e.g. admin, dealer, psbpages.
+$coreModuleGroups = @()
 if ($isModuleRepo) {
-    # Core module groups (synced from core, must stay readonly)
-    $coreModuleGroups = @("admin", "psbpages")
+    $coreModuleGroups = @(git ls-tree -d --name-only core/main src/modules/ 2>$null |
+        Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf })
+}
 
+if ($isModuleRepo -and $coreModuleGroups.Count -eq 0) {
+    Write-Host "[5/5] WARNING: could not read core's module folders (is the core remote fetched?) - read-only rules left as they are." -ForegroundColor Yellow
+} elseif ($isModuleRepo) {
     # Detect jr dev's own module folders (everything else in src/modules/)
     $devModules = @()
     if (Test-Path "src/modules") {
@@ -279,22 +316,25 @@ if ($isModuleRepo) {
         }
     }
 
-    # Check if current settings already have the correct readonly config
+    # Wanted: everything read-only except .env files and this repo's own
+    # module folders. Compare the exact list, so stale entries (e.g. a core folder)
+    # get removed too.
+    $wantedExclude = (@("**/.env*") + @($devModules | Sort-Object | ForEach-Object { "**/src/modules/$_/**" }) | Sort-Object) -join "|"
     $needsUpdate = $true
     if (Test-Path $settingsPath) {
-        $raw = Get-Content $settingsPath -Raw
-        if ($raw -match '"files\.readonlyInclude"' -and $raw -match '"\*\*"\s*:\s*true') {
-            # readonlyInclude with ** exists — check if all dev modules are excluded
-            $allExcluded = $true
-            foreach ($mod in $devModules) {
-                if ($raw -notmatch [regex]::Escape("**/src/modules/$mod/**")) {
-                    $allExcluded = $false
-                    break
-                }
+        try {
+            $current = Get-Content $settingsPath -Raw | ConvertFrom-Json
+            $includeOk = $current."files.readonlyInclude" -and ($current."files.readonlyInclude"."**" -eq $true)
+            $currentExclude = ""
+            if ($current."files.readonlyExclude") {
+                $currentExclude = (@($current."files.readonlyExclude".PSObject.Properties |
+                    Where-Object { $_.Value -eq $true } | ForEach-Object { $_.Name }) | Sort-Object) -join "|"
             }
-            if ($allExcluded -and $raw -match '"files\.readonlyExclude"') {
+            if ($includeOk -and $currentExclude -eq $wantedExclude) {
                 $needsUpdate = $false
             }
+        } catch {
+            $needsUpdate = $true
         }
     }
 

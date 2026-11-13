@@ -6,6 +6,8 @@ import { Button, Form } from "react-bootstrap";
 import dealerIcon from "@/styles/psb_dealer_icon.svg";
 import DealerErrorHost from "../components/DealerErrorHost";
 import { errorFromResult, showDealerError } from "../data/dealerErrorReport";
+import { routePathOf } from "@/core/routes.js";
+import dealerPortalModule from "../index.js";
 
 export default function DealerLoginView({ supportEmail = "" }) {
   const [username, setUsername] = useState("");
@@ -41,7 +43,7 @@ export default function DealerLoginView({ supportEmail = "" }) {
         return;
       }
       // Full navigation so the new cookie is sent with the account page request.
-      window.location.assign("/dealer/account");
+      window.location.assign(routePathOf(dealerPortalModule, "DealerAccountPage"));
     } catch {
       setError("Unable to sign in right now. Please try again.");
       showDealerError(new Error("Unable to sign in right now. Please try again."), {

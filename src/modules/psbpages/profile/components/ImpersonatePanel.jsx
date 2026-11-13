@@ -6,7 +6,8 @@ import { getSupabase } from "@/core/supabase/client";
 import { toastError, toastSuccess } from "@/shared/utils/toast";
 
 /**
- * "Log in as user" card — visible only to users holding the CORE MANAGER role.
+ * "Log in as user" card — visible only to users whose role is given the User
+ * Master Setup card in Card Module Setup.
  * Visibility is driven by GET /api/auth/impersonate; the real gate is
  * enforced server-side on POST.
  */
@@ -39,23 +40,14 @@ export default function ImpersonatePanel({ roleGroups = [] }) {
   }, []);
 
   if (!allowed) {
-    const profileListsManagerRole = roleGroups.some((group) =>
-      group.roles?.some((role) => role.roleName.trim().toLowerCase() === "core manager"),
-    );
-
     if (permissionError) {
       return <div className="notice-banner notice-banner-warning mb-3" role="alert">{permissionError}</div>;
     }
-    if (profileListsManagerRole) {
-      const mismatchMessage = {
-        session_user_missing: "Core could not identify the verified user session. Sign out and sign in again.",
-        no_active_assignments: "Core found no active role assignments for this session. The profile and session may belong to different user records; sign out and sign in again.",
-        required_role_not_assigned: "Core found no active CORE MANAGER assignment for this session user. Verify the user record linked to this sign-in.",
-        required_role_inactive: "The CORE MANAGER role definition is inactive. Activate the role in Role Setup.",
-      }[denialReason];
+    // Only a broken sign-in is worth a message; anyone without access simply doesn't see the panel.
+    if (denialReason === "session_user_missing") {
       return (
         <div className="notice-banner notice-banner-warning mb-3" role="status">
-          {mismatchMessage || "Your profile lists CORE MANAGER, but the server could not verify an active assignment."}
+          Core could not identify the verified user session. Sign out and sign in again.
         </div>
       );
     }

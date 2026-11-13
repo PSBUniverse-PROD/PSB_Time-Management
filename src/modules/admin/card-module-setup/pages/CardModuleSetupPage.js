@@ -9,7 +9,19 @@ function parseAppId(value) {
 
 export default async function CardModuleSetupPage({ searchParams }) {
   const resolvedSearchParams = await searchParams;
-  const { applications, cardGroups, cards } = await loadCardModuleSetupData();
+  let applications, cardGroups, cards;
+  try {
+    ({ applications, cardGroups, cards } = await loadCardModuleSetupData());
+  } catch (error) {
+    return (
+      <main className="container py-4">
+        <div className="notice-banner notice-banner-danger mb-0">
+          <strong className="d-block">Can&apos;t open Card Module Setup.</strong>
+          <span>{error?.message || "Unknown error"}</span>
+        </div>
+      </main>
+    );
+  }
   const initialSelectedAppId = parseAppId(resolvedSearchParams?.app) ?? applications[0]?.app_id ?? null;
 
   return (

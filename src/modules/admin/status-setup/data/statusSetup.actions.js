@@ -1,6 +1,11 @@
 "use server";
 
+import { requirePageAccess } from "@/core/auth/pageAccess.server.js";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import statusSetupModule from "../index.js";
+
+// Every action in this file needs a role given this screen's card in Card Module Setup.
+const requireEditor = () => requirePageAccess(statusSetupModule);
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -62,6 +67,7 @@ function assertValidPayload(payload, message) {
 // ─── SERVER ACTIONS (called from client) ───────────────────
 
 export async function loadStatusSetupData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
 
   const { data, error } = await supabase
@@ -74,6 +80,7 @@ export async function loadStatusSetupData() {
 }
 
 export async function createStatusAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { data: statuses } = await supabase.from("psb_s_status").select("*").limit(1);
   const sample = statuses?.[0] || null;
@@ -91,6 +98,7 @@ export async function createStatusAction(payload) {
 }
 
 export async function updateStatusAction(statusId, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { data: existing, error: fetchErr } = await supabase.from("psb_s_status").select("*").eq("status_id", statusId).single();
   if (fetchErr) throw new Error(fetchErr.message || "Failed to fetch status");
@@ -104,6 +112,7 @@ export async function updateStatusAction(statusId, updates) {
 }
 
 export async function deactivateStatusAction(statusId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("psb_s_status").update({ is_active: false }).eq("status_id", statusId).select("*").single();
   if (error) throw new Error(error.message || "Failed to deactivate status");
@@ -111,6 +120,7 @@ export async function deactivateStatusAction(statusId) {
 }
 
 export async function hardDeleteStatusAction(statusId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("psb_s_status").delete().eq("status_id", statusId);
   if (error) throw new Error(error.message || "Failed to permanently delete status");
@@ -126,6 +136,7 @@ const TEMP_STATUS_ID_PREFIX = "tmp-status-";
  * deactivations → permanent deletes; the items of each step run together.
  */
 export async function saveStatusBatch(statusChanges) {
+  await requireEditor();
   const changes = statusChanges || {};
   const tempIdMap = {};
   const isTempStatus = (id) => String(id ?? "").startsWith(TEMP_STATUS_ID_PREFIX);
@@ -158,3 +169,5 @@ export async function saveStatusBatch(statusChanges) {
     if (!isTempStatus(resolved)) await hardDeleteStatusAction(resolved);
   }));
 }
+
+

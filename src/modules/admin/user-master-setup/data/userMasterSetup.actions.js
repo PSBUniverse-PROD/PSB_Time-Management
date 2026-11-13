@@ -457,22 +457,26 @@ async function loadUsersWithLookups(supabase) {
 }
 
 export async function loadUserMasterSetupData() {
+  await requireUserMasterEditor();
   const { lookupData, users } = await loadUsersWithLookups(getSupabaseAdmin());
   // Lookups go to the screen with the page, so it doesn't load them a second time.
   return { users, totalUsers: users.length, lookups: lookupData };
 }
 
 export async function loadUserMasterLookups() {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   return loadLookupData(supabase);
 }
 
 export async function loadUserMasterUsers() {
+  await requireUserMasterEditor();
   const { users } = await loadUsersWithLookups(getSupabaseAdmin());
   return users;
 }
 
 export async function loadUserMasterDetail(userId) {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   // The user row, lookup lists and access rows (active and inactive) load
   // together; only the auth account lookup needs the user row first.
@@ -499,6 +503,7 @@ export async function loadUserMasterDetail(userId) {
 // `skipResultRow`: the batch save only needs the new id, so it skips the
 // lookup/auth loads that build the full row for the screen.
 export async function createUserAction(payload, { skipResultRow = false } = {}) {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   const createPayload = buildWritablePayload(payload, { includeDefaultActive: true });
   const pw = normalizePassword(payload?.password);
@@ -545,6 +550,7 @@ export async function createUserAction(payload, { skipResultRow = false } = {}) 
 
 // `skipResultRow`: see createUserAction.
 export async function updateUserAction(userId, updates, { skipResultRow = false } = {}) {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   const { data: existing, error: fetchErr } = await supabase.from("psb_s_user").select("*").eq("user_id", userId).single();
   if (fetchErr) throw new Error(fetchErr.message || "Failed to fetch user.");
@@ -594,6 +600,7 @@ export async function updateUserAction(userId, updates, { skipResultRow = false 
 }
 
 export async function deleteUserAction(userId) {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   // Revoke all active access
   const { data: revokedRows } = await supabase.from("psb_m_userapproleaccess").update({ is_active: false }).eq("user_id", userId).eq("is_active", true).select("*");
@@ -608,6 +615,7 @@ export async function deleteUserAction(userId) {
 }
 
 export async function createAccessAction(userId, payload) {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   const appId = normalizeOptionalText(payload?.app_id), roleId = normalizeOptionalText(payload?.role_id);
   if (!appId || !roleId) throw new Error("Application and role are required.");
@@ -627,6 +635,7 @@ export async function createAccessAction(userId, payload) {
 }
 
 export async function deleteAccessAction(userId, payload) {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   const appId = normalizeOptionalText(payload?.app_id), roleId = normalizeOptionalText(payload?.role_id);
   if (!appId || !roleId) throw new Error("Application and role are required.");
@@ -676,6 +685,7 @@ async function upsertAccessRows(supabase, rows) {
  * access changes go together. Returns { [tempId]: newUserId }.
  */
 export async function saveUserMasterBatch(pendingBatch) {
+  await requireUserMasterEditor();
   const supabase = getSupabaseAdmin();
   const createdIds = {};
   // Staged rows may point at a user created earlier in this batch ("tmp-…" id).
@@ -734,6 +744,7 @@ function toSeatId(value) {
 
 async function seatResult(work, fallback) {
   try {
+    // Inside the try, so "no access" comes back as a readable error.
     await requireUserMasterEditor();
     const data = await work();
     return { success: true, ...(data && typeof data === "object" ? data : {}) };
@@ -845,3 +856,5 @@ export async function removeUserSeatAction(userId, positionId) {
     await refreshUserSeats(supabase, [uid]);
   }, "Failed to remove the seat.");
 }
+
+

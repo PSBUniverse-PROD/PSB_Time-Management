@@ -6,12 +6,23 @@
 import { jwtVerify, SignJWT } from 'jose';
 
 // ── Configuration ────────────────────────────────────────────
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-production';
+// No built-in fallback: a default secret written in the code would let anyone
+// forge sign-in tokens. Sign-in refuses to work until JWT_SECRET is set.
+const TEMPLATE_SECRET = 'your-secret-key-change-this-in-production';
 const JWT_ALGORITHM = 'HS256';
 const JWT_EXPIRATION = '24h'; // 24 hours
 
 // Convert secret to Uint8Array for jose library
-const getSecretKey = () => new TextEncoder().encode(JWT_SECRET);
+const getSecretKey = () => {
+  const secret = String(process.env.JWT_SECRET || '').trim();
+  if (!secret) {
+    throw new Error('JWT_SECRET is not set. Sign-in is disabled until it is configured.');
+  }
+  if (secret === TEMPLATE_SECRET && process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET still has the template value. Set a real secret before running in production.');
+  }
+  return new TextEncoder().encode(secret);
+};
 
 // ── Token Schema ────────────────────────────────────────────
 /**

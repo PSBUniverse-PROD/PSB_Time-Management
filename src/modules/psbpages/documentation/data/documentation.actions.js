@@ -2,6 +2,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { requireSignedIn } from "@/core/auth/pageAccess.server.js";
 
 /**
  * Chapter / section manifest.
@@ -109,6 +110,7 @@ async function readDocFile(filePath) {
 }
 
 export async function loadBookManifest() {
+  await requireSignedIn();
   return BOOK_MANIFEST.map((chapter) => ({
     id: chapter.id,
     title: chapter.title,
@@ -118,6 +120,7 @@ export async function loadBookManifest() {
 }
 
 export async function loadSection(sectionId) {
+  await requireSignedIn();
   for (const chapter of BOOK_MANIFEST) {
     const section = chapter.sections.find((s) => s.id === sectionId);
     if (section) {

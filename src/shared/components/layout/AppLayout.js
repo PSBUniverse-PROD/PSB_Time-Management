@@ -13,7 +13,7 @@ import {
   NAVBAR_LOADER_START_EVENT,
 } from "@/shared/utils/navbar-loader";
 import { SSO_ENABLED, IS_MODULE, logout as ssoLogout, redirectToLogin } from "@/core/sso-client";
-import { isLoginPath, validateRedirectUrl } from "@/core/auth/redirect-validator";
+import { isLoginPath, LOGIN_SHORT_PATH, validateRedirectUrl } from "@/core/auth/redirect-validator";
 import { toastError } from "@/shared/utils/toast";
 
 const CORE_PORTAL_URL = (process.env.NEXT_PUBLIC_CORE_PORTAL_URL || "https://www.psbuniverse.com").replace(/\/+$/, "");
@@ -242,7 +242,7 @@ export default function AppLayout({ children }) {
           : window.location.pathname + window.location.search;
         redirectToLogin(returnPath);
       } else {
-        router.replace("/login");
+        router.replace(LOGIN_SHORT_PATH);
       }
     }
   }, [authError, isAuthenticated, isLoginPage, loading, logoutBusy, router, startLoader]);
@@ -371,7 +371,7 @@ export default function AppLayout({ children }) {
 
     clearAccessTokenCookie();
     startLoader();
-    window.location.href = SSO_ENABLED ? "https://psbuniverse.com/" : "/login";
+    window.location.href = SSO_ENABLED ? `${CORE_PORTAL_URL}/` : LOGIN_SHORT_PATH;
   }
 
   if (authError) {

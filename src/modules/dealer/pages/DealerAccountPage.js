@@ -3,6 +3,8 @@ import DealerAccountWorkspace from "../components/DealerAccountWorkspace";
 import { loadDealerAccountData } from "../data/dealerPortal.actions";
 import { loadUsStatesAction } from "../data/usAddress.actions";
 import { DEALER_LOCK_MINUTES, DEALER_MAX_FAILED_ATTEMPTS } from "@/core/dealer/dealerAuth";
+import { routePathOf } from "@/core/routes.js";
+import dealerPortalModule from "../index.js";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +35,7 @@ function formatMoney(value) {
  */
 export default async function DealerAccountPage() {
   const [data, states] = await Promise.all([loadDealerAccountData(), loadUsStatesAction()]);
-  if (data.status !== "ok") redirect("/dealer/login");
+  if (data.status !== "ok") redirect(routePathOf(dealerPortalModule, "DealerLoginPage"));
 
   return (
     <DealerAccountWorkspace

@@ -72,7 +72,38 @@ try {
         Invoke-SyncGit @('branch', '-f', 'core-main', 'core/main')
 
         Write-Host "`n[3/4] Merging core-main into main..." -ForegroundColor Green
-        Invoke-SyncGit @('merge', '--ff', '--no-edit', 'core-main', '-m', 'Merge upstream core changes into main')
+        # Merge without committing, so the per-app files ($coreSyncExceptions) can keep
+        # this repo's own copy: core's package-lock.json / settings.json never come in.
+        $preMergeHead = Invoke-SyncGit @('rev-parse', 'HEAD')
+        & git merge --ff --no-commit --no-edit core-main
+        $mergeExit = $LASTEXITCODE
+        $conflicts = @(& git -c core.quotepath=false diff --name-only --diff-filter=U | Where-Object { $_ })
+        $otherConflicts = @($conflicts | Where-Object { $coreSyncExceptions -notcontains $_ })
+        if ($otherConflicts.Count -gt 0) {
+            throw "Merge conflicts in: $($otherConflicts -join ', '). Resolve them, commit, then run sync again."
+        }
+        if ($mergeExit -ne 0 -and $conflicts.Count -eq 0) {
+            throw 'git merge core-main failed.'
+        }
+
+        foreach ($path in $coreSyncExceptions) {
+            & git cat-file -e "${preMergeHead}:$path" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                # Put back this repo's own copy (also resolves a conflict in it).
+                Invoke-SyncGit @('checkout', $preMergeHead, '--', $path) | Out-Null
+            }
+        }
+
+        $mergeHeadPath = Invoke-SyncGit @('rev-parse', '--git-path', 'MERGE_HEAD')
+        if (Test-Path $mergeHeadPath) {
+            Invoke-SyncGit @('commit', '--no-edit', '-m', 'Merge upstream core changes into main') | Out-Null
+        } else {
+            # Fast-forward: commit only if a per-app file had to be put back.
+            & git diff --cached --quiet
+            if ($LASTEXITCODE -ne 0) {
+                Invoke-SyncGit @('commit', '-m', 'chore: keep this repo''s own package and editor settings') | Out-Null
+            }
+        }
 
         # Core always wins: any file that exists in core but differs here (M) or
         # is missing here (D) is replaced with core's copy. Files that exist only

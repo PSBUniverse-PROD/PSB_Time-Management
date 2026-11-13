@@ -1,6 +1,11 @@
 "use server";
 
+import { requirePageAccess } from "@/core/auth/pageAccess.server.js";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import workflowSetupModule from "../index.js";
+
+// Every action in this file needs a role given this screen's card in Card Module Setup.
+const requireEditor = () => requirePageAccess(workflowSetupModule);
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -46,6 +51,7 @@ function getStageDisplayOrder(stage, fallback = 0) {
 // ─── DATA LOADING ──────────────────────────────────────────
 
 export async function loadWorkflowSetupData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
 
   const [wfResult, stagesResult, stageTypesResult, orgRolesResult, companiesResult, departmentsResult, appsResult] = await Promise.all([
@@ -84,6 +90,7 @@ function compareText(left, right) {
 }
 
 export async function loadStageTypesData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("wfk_s_stagetype").select("*").order("stagetype_name", { ascending: true });
   if (error) throw new Error(error.message || "Failed to fetch stage types");
@@ -91,6 +98,7 @@ export async function loadStageTypesData() {
 }
 
 export async function loadApprovalTypesData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("wfk_s_approvaltype").select("*").order("approvaltype_name", { ascending: true });
   if (error) throw new Error(error.message || "Failed to fetch approval types");
@@ -98,6 +106,7 @@ export async function loadApprovalTypesData() {
 }
 
 export async function loadStatusesData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("wfk_s_status").select("*").order("status_name", { ascending: true });
   if (error) throw new Error(error.message || "Failed to fetch statuses");
@@ -105,6 +114,7 @@ export async function loadStatusesData() {
 }
 
 export async function loadOrgRolesData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("wfk_s_orgrole").select("*").order("name", { ascending: true });
   if (error) throw new Error(error.message || "Failed to fetch org roles");
@@ -112,6 +122,7 @@ export async function loadOrgRolesData() {
 }
 
 export async function loadStageParticipantsData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const [participantsResult, stagesResult, orgRolesResult, approvalTypesResult] = await Promise.all([
     supabase.from("wfk_m_stageparticipant").select("*").order("stageparticipant_id", { ascending: true }),
@@ -129,6 +140,7 @@ export async function loadStageParticipantsData() {
 }
 
 export async function loadUserOrgRolesData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const [mappingsResult, orgRolesResult, usersResult] = await Promise.all([
     supabase.from("wfk_m_userorgrole").select("*").order("user_orgrole_id", { ascending: true }),
@@ -146,6 +158,7 @@ export async function loadUserOrgRolesData() {
 // ─── CONSOLIDATED OVERVIEW LOADER ──────────────────────────
 
 export async function loadWorkflowOverviewData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
 
   const [
@@ -197,6 +210,7 @@ export async function loadWorkflowOverviewData() {
 // ─── WORKFLOW ACTIONS ──────────────────────────────────────
 
 export async function createWorkflowAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const wfName = normalizeText(payload?.wf_name);
   const wfDesc = sanitizeOptionalText(payload?.wf_description);
@@ -223,6 +237,7 @@ export async function createWorkflowAction(payload) {
 }
 
 export async function updateWorkflowAction(wfId, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "wf_name")) {
@@ -244,6 +259,7 @@ export async function updateWorkflowAction(wfId, updates) {
 }
 
 export async function deactivateWorkflowAction(wfId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   // Cascade deactivate stages (all in one query)
   await supabase.from("wfk_s_workflowstages").update({ is_active: false }).eq("wf_id", wfId);
@@ -253,6 +269,7 @@ export async function deactivateWorkflowAction(wfId) {
 }
 
 export async function hardDeleteWorkflowAction(wfId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   // Cascade delete stages and their participants (one query each, not per stage)
   const { data: stages } = await supabase.from("wfk_s_workflowstages").select("wfs_id").eq("wf_id", wfId);
@@ -269,6 +286,7 @@ export async function hardDeleteWorkflowAction(wfId) {
 // ─── WORKFLOW STAGE ACTIONS ────────────────────────────────
 
 export async function createWorkflowStageAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const wfId = payload?.wf_id;
   const stageName = normalizeText(payload?.stage_name);
@@ -295,6 +313,7 @@ export async function createWorkflowStageAction(payload) {
 }
 
 export async function updateWorkflowStageAction(stageId, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "stage_name")) {
@@ -314,6 +333,7 @@ export async function updateWorkflowStageAction(stageId, updates) {
 }
 
 export async function deactivateWorkflowStageAction(stageId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_s_workflowstages").update({ is_active: false }).eq("wfs_id", stageId);
   if (error) throw new Error(error.message || "Failed to deactivate workflow stage");
@@ -321,6 +341,7 @@ export async function deactivateWorkflowStageAction(stageId) {
 }
 
 export async function hardDeleteWorkflowStageAction(stageId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   await supabase.from("wfk_m_stageparticipant").delete().eq("wfs_id", stageId);
   const { error } = await supabase.from("wfk_s_workflowstages").delete().eq("wfs_id", stageId);
@@ -331,6 +352,7 @@ export async function hardDeleteWorkflowStageAction(stageId) {
 // ─── ORDER ACTION ──────────────────────────────────────────
 
 export async function saveWorkflowOrderAction(wfIds) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const requestedIds = (Array.isArray(wfIds) ? wfIds : [])
     .map((id) => (typeof id === "string" && id.trim() !== "" && Number.isFinite(Number(id)) ? Number(id) : id))
@@ -365,6 +387,7 @@ export async function saveWorkflowOrderAction(wfIds) {
 // ─── STAGE TYPE ACTIONS ────────────────────────────────────
 
 export async function createStageTypeAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const name = normalizeText(payload?.stagetype_name);
   const desc = sanitizeOptionalText(payload?.stagetype_description);
@@ -376,6 +399,7 @@ export async function createStageTypeAction(payload) {
 }
 
 export async function updateStageTypeAction(id, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "stagetype_name")) {
@@ -392,6 +416,7 @@ export async function updateStageTypeAction(id, updates) {
 }
 
 export async function deactivateStageTypeAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_s_stagetype").delete().eq("stagetype_id", id);
   if (error) throw new Error(error.message || "Failed to delete stage type");
@@ -399,12 +424,14 @@ export async function deactivateStageTypeAction(id) {
 }
 
 export async function hardDeleteStageTypeAction(id) {
+  await requireEditor();
   return deactivateStageTypeAction(id);
 }
 
 // ─── APPROVAL TYPE ACTIONS ─────────────────────────────────
 
 export async function createApprovalTypeAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const name = normalizeText(payload?.approvaltype_name);
   const desc = sanitizeOptionalText(payload?.approvaltype_description);
@@ -416,6 +443,7 @@ export async function createApprovalTypeAction(payload) {
 }
 
 export async function updateApprovalTypeAction(id, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "approvaltype_name")) {
@@ -432,6 +460,7 @@ export async function updateApprovalTypeAction(id, updates) {
 }
 
 export async function deactivateApprovalTypeAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_s_approvaltype").delete().eq("approvaltype_id", id);
   if (error) throw new Error(error.message || "Failed to delete approval type");
@@ -439,12 +468,14 @@ export async function deactivateApprovalTypeAction(id) {
 }
 
 export async function hardDeleteApprovalTypeAction(id) {
+  await requireEditor();
   return deactivateApprovalTypeAction(id);
 }
 
 // ─── STATUS ACTIONS ────────────────────────────────────────
 
 export async function createStatusAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const name = normalizeText(payload?.status_name);
   const desc = sanitizeOptionalText(payload?.status_description);
@@ -456,6 +487,7 @@ export async function createStatusAction(payload) {
 }
 
 export async function updateStatusAction(id, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "status_name")) {
@@ -472,6 +504,7 @@ export async function updateStatusAction(id, updates) {
 }
 
 export async function deactivateStatusAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_s_status").delete().eq("status_id", id);
   if (error) throw new Error(error.message || "Failed to delete status");
@@ -479,12 +512,14 @@ export async function deactivateStatusAction(id) {
 }
 
 export async function hardDeleteStatusAction(id) {
+  await requireEditor();
   return deactivateStatusAction(id);
 }
 
 // ─── ORG ROLE ACTIONS ──────────────────────────────────────
 
 export async function createOrgRoleAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const name = normalizeText(payload?.name);
   const desc = sanitizeOptionalText(payload?.description);
@@ -497,6 +532,7 @@ export async function createOrgRoleAction(payload) {
 }
 
 export async function updateOrgRoleAction(id, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "name")) {
@@ -514,6 +550,7 @@ export async function updateOrgRoleAction(id, updates) {
 }
 
 export async function deactivateOrgRoleAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   // Cascade deactivate users in charge for this role (all in one query)
   await supabase.from("wfk_m_userorgrole").update({ is_active: false }).eq("role_id", id);
@@ -523,6 +560,7 @@ export async function deactivateOrgRoleAction(id) {
 }
 
 export async function hardDeleteOrgRoleAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   // Cascade delete users in charge for this role
   await supabase.from("wfk_m_userorgrole").delete().eq("role_id", id);
@@ -534,6 +572,7 @@ export async function hardDeleteOrgRoleAction(id) {
 // ─── STAGE PARTICIPANT ACTIONS ─────────────────────────────
 
 export async function createStageParticipantAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const wfsId = payload?.wfs_id;
   const orgroleId = payload?.orgrole_id ?? null;
@@ -547,6 +586,7 @@ export async function createStageParticipantAction(payload) {
 }
 
 export async function updateStageParticipantAction(id, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "wfs_id")) payload.wfs_id = updates.wfs_id ?? null;
@@ -561,6 +601,7 @@ export async function updateStageParticipantAction(id, updates) {
 }
 
 export async function deactivateStageParticipantAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_m_stageparticipant").update({ is_active: false }).eq("stageparticipant_id", id);
   if (error) throw new Error(error.message || "Failed to deactivate stage participant");
@@ -568,6 +609,7 @@ export async function deactivateStageParticipantAction(id) {
 }
 
 export async function hardDeleteStageParticipantAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_m_stageparticipant").delete().eq("stageparticipant_id", id);
   if (error) throw new Error(error.message || "Failed to permanently delete stage participant");
@@ -577,6 +619,7 @@ export async function hardDeleteStageParticipantAction(id) {
 // ─── USER ORG ROLE ACTIONS ─────────────────────────────────
 
 export async function createUserOrgRoleAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const userId = payload?.user_id;
   const roleId = payload?.role_id;
@@ -591,6 +634,7 @@ export async function createUserOrgRoleAction(payload) {
 }
 
 export async function updateUserOrgRoleAction(id, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "user_id")) payload.user_id = updates.user_id ?? null;
@@ -605,6 +649,7 @@ export async function updateUserOrgRoleAction(id, updates) {
 }
 
 export async function deactivateUserOrgRoleAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_m_userorgrole").update({ is_active: false }).eq("user_orgrole_id", id);
   if (error) throw new Error(error.message || "Failed to deactivate user org role");
@@ -612,6 +657,7 @@ export async function deactivateUserOrgRoleAction(id) {
 }
 
 export async function hardDeleteUserOrgRoleAction(id) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("wfk_m_userorgrole").delete().eq("user_orgrole_id", id);
   if (error) throw new Error(error.message || "Failed to permanently delete user org role");
@@ -643,6 +689,7 @@ function idSet(...lists) {
  * included). Returns { wfIdMap, deactivatedWfIds, orderedPersistedWfIds }.
  */
 export async function saveWorkflowBatch(pendingBatch, orderedWfIds) {
+  await requireEditor();
   const batch = pendingBatch || {};
   const wfIdMap = {};
   const stageIdMap = {};
@@ -723,6 +770,7 @@ export async function saveWorkflowBatch(pendingBatch, orderedWfIds) {
  * Returns { roleIdMap, userRoleIdMap, deactivatedRoleIds, deactivatedUserRoleIds }.
  */
 export async function saveOrgRoleBatch(pendingBatch) {
+  await requireEditor();
   const batch = pendingBatch || {};
   const roleIdMap = {};
   const userRoleIdMap = {};
@@ -787,6 +835,7 @@ const REF_TABLE_ACTIONS = {
  * deactivations → deletes. `refKey` is one of the REF_TABLE_ACTIONS keys.
  */
 export async function saveRefTableBatch(refKey, changes) {
+  await requireEditor();
   const table = REF_TABLE_ACTIONS[refKey];
   if (!table) throw new Error(`Unknown workflow table "${refKey}".`);
   const batch = changes || {};
@@ -818,3 +867,5 @@ export async function saveRefTableBatch(refKey, changes) {
     if (!isTempId("ref", resolved)) await table.hardDelete(resolved);
   }));
 }
+
+

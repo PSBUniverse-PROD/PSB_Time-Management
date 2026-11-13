@@ -19,6 +19,8 @@
  *   than one per render.
  */
 
+import { LOGIN_SHORT_PATH } from "@/core/auth/redirect-validator";
+
 const MODULE_KEY = (process.env.NEXT_PUBLIC_MODULE_KEY || "").trim();
 // Prod only. Shared login needs every app under one parent domain
 // (.psbuniverse.com); dev runs on *.vercel.app hosts, which browsers never
@@ -289,10 +291,10 @@ export function redirectToLogin(returnPath) {
 
   if (SSO_ENABLED && (IS_MODULE || ENV === "prod")) {
     // Production: use Core Portal SSO login
-    loginUrl = new URL("/login", CORE_PORTAL_URL);
+    loginUrl = new URL(LOGIN_SHORT_PATH, CORE_PORTAL_URL);
   } else {
     // Non-production: use same-origin login (no cross-domain redirect)
-    loginUrl = new URL("/login", window.location.origin);
+    loginUrl = new URL(LOGIN_SHORT_PATH, window.location.origin);
   }
 
   if (returnPath) {

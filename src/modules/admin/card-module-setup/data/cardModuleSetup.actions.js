@@ -1,6 +1,11 @@
 "use server";
 
+import { requirePageAccess } from "@/core/auth/pageAccess.server.js";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import cardModuleSetupModule from "../index.js";
+
+// Every action in this file needs a role given this screen's card in Card Module Setup.
+const requireEditor = () => requirePageAccess(cardModuleSetupModule);
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -23,6 +28,7 @@ function hasOwn(source, key) {
 // ─── Load data ─────────────────────────────────────────────
 
 export async function loadCardModuleSetupData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
 
   const [{ data: groups, error: gErr }, { data: cards, error: cErr }, { data: apps, error: aErr }] =
@@ -45,6 +51,7 @@ export async function loadCardModuleSetupData() {
 // ─── Card Group Actions ────────────────────────────────────
 
 export async function createCardGroupAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const groupName = normalizeText(payload?.group_name);
   if (!groupName) throw new Error("Card group name is required.");
@@ -73,6 +80,7 @@ export async function createCardGroupAction(payload) {
 }
 
 export async function updateCardGroupAction(groupId, updates) {
+  await requireEditor();
   if (groupId == null || groupId === "") throw new Error("Card group ID is required.");
   const supabase = getSupabaseAdmin();
   const patch = {};
@@ -94,6 +102,7 @@ export async function updateCardGroupAction(groupId, updates) {
 }
 
 export async function deactivateCardGroupAction(groupId) {
+  await requireEditor();
   if (groupId == null || groupId === "") throw new Error("Card group ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -111,6 +120,7 @@ export async function deactivateCardGroupAction(groupId) {
 }
 
 export async function hardDeleteCardGroupAction(groupId) {
+  await requireEditor();
   if (groupId == null || groupId === "") throw new Error("Card group ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -150,6 +160,7 @@ async function writeChangedOrder(supabase, table, idColumn, ids, errorMessage) {
 }
 
 export async function saveCardGroupOrderAction(groupIds) {
+  await requireEditor();
   if (!Array.isArray(groupIds) || groupIds.length === 0) return { updatedCount: 0 };
   const supabase = getSupabaseAdmin();
   const updatedCount = await writeChangedOrder(supabase, GROUP_TABLE, "group_id", groupIds, "Failed to update card group order");
@@ -159,6 +170,7 @@ export async function saveCardGroupOrderAction(groupIds) {
 // ─── Card Actions ──────────────────────────────────────────
 
 export async function createCardAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const cardName = normalizeText(payload?.card_name);
   if (!cardName) throw new Error("Card name is required.");
@@ -189,6 +201,7 @@ export async function createCardAction(payload) {
 }
 
 export async function updateCardAction(cardId, updates) {
+  await requireEditor();
   if (cardId == null || cardId === "") throw new Error("Card ID is required.");
   const supabase = getSupabaseAdmin();
   const patch = {};
@@ -211,6 +224,7 @@ export async function updateCardAction(cardId, updates) {
 }
 
 export async function deactivateCardAction(cardId) {
+  await requireEditor();
   if (cardId == null || cardId === "") throw new Error("Card ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -222,6 +236,7 @@ export async function deactivateCardAction(cardId) {
 }
 
 export async function hardDeleteCardAction(cardId) {
+  await requireEditor();
   if (cardId == null || cardId === "") throw new Error("Card ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -233,6 +248,7 @@ export async function hardDeleteCardAction(cardId) {
 }
 
 export async function saveCardOrderAction(cardIds) {
+  await requireEditor();
   if (!Array.isArray(cardIds) || cardIds.length === 0) return { updatedCount: 0 };
   const supabase = getSupabaseAdmin();
   const updatedCount = await writeChangedOrder(supabase, CARD_TABLE, "card_id", cardIds, "Failed to update card order");
@@ -242,6 +258,7 @@ export async function saveCardOrderAction(cardIds) {
 // ─── Card Role Access Actions ──────────────────────────────
 
 export async function loadCardRoleAccessByApp(appId) {
+  await requireEditor();
   if (appId == null || appId === "") return { roleAccess: [], roles: [] };
   const supabase = getSupabaseAdmin();
 
@@ -260,6 +277,7 @@ export async function loadCardRoleAccessByApp(appId) {
 }
 
 export async function upsertCardRoleAccessAction(cardId, roleId) {
+  await requireEditor();
   if (cardId == null || cardId === "") throw new Error("Card ID is required.");
   if (roleId == null || roleId === "") throw new Error("Role ID is required.");
   const supabase = getSupabaseAdmin();
@@ -294,6 +312,7 @@ export async function upsertCardRoleAccessAction(cardId, roleId) {
 }
 
 export async function removeCardRoleAccessAction(cardId, roleId) {
+  await requireEditor();
   if (cardId == null || cardId === "") throw new Error("Card ID is required.");
   if (roleId == null || roleId === "") throw new Error("Role ID is required.");
   const supabase = getSupabaseAdmin();
@@ -360,6 +379,7 @@ async function addCardRoleAccessRows(supabase, pairs) {
  * groups whose card order changed on screen.
  */
 export async function saveCardModuleBatch(pendingBatch, orderedGroupIds, cardOrders) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const batch = pendingBatch || {};
   const groupIdMap = {};
@@ -438,3 +458,5 @@ export async function saveCardModuleBatch(pendingBatch, orderedGroupIds, cardOrd
 
   return { groupIdMap, cardIdMap, deactivatedGroupIds: Array.from(deactivatedGroupSet), orderedPersistedGroupIds };
 }
+
+

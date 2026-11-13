@@ -1,9 +1,10 @@
 /**
  * Dealer "Login as" Endpoint
  * POST /api/dealer/login-as  { dealerId }
- * Lets PSB staff with the admin-enroll or admin-master role open a dealer's
- * portal account without its password, to fill in the dealer's details for
- * them. Sets the same dealer session cookie as /api/dealer/login, but leaves
+ * Lets PSB staff who may access Dealer Master Setup (its card in Card Module
+ * Setup) open a dealer's portal account without its password, to fill in the
+ * dealer's details for them. Sets the same dealer session cookie as
+ * /api/dealer/login, but leaves
  * last_login_at, failed attempts and the lock alone, so the dealer's own
  * sign-in history is unchanged. The staff session stays signed in.
  */

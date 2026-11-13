@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
-import { isLoginPath } from "@/core/auth/redirect-validator";
+import { isLoginPath, LOGIN_SHORT_PATH } from "@/core/auth/redirect-validator";
 import { SSO_ENABLED } from "@/core/sso-client";
+import { parentPathOf, routePathOf } from "@/core/routes.js";
+import dealerPortalModule from "@/modules/dealer/index.js";
+
+// Dealer portal addresses come from its module (src/modules/dealer/index.js).
+const DEALER_LOGIN_PATH = routePathOf(dealerPortalModule, "DealerLoginPage");
+const DEALER_BASE_PATH = parentPathOf(DEALER_LOGIN_PATH);
 
 /**
  * SSO Proxy Middleware for PSBUniverse
@@ -34,10 +40,10 @@ export function proxy(req) {
   // Dealers sign in separately (psb_dealer_session, see core/dealer/dealerAuth).
   // Their pages never accept or require an internal session; the page itself
   // verifies the cookie, this only checks that one is present.
-  if (pathname === "/dealer" || pathname.startsWith("/dealer/")) {
+  if (pathname === DEALER_BASE_PATH || pathname.startsWith(`${DEALER_BASE_PATH}/`)) {
     const hasDealerSession = Boolean(String(req.cookies.get("psb_dealer_session")?.value || "").trim());
-    if (!hasDealerSession && pathname !== "/dealer/login") {
-      url.pathname = "/dealer/login";
+    if (!hasDealerSession && pathname !== DEALER_LOGIN_PATH) {
+      url.pathname = DEALER_LOGIN_PATH;
       url.search = "";
       const dealerRedirect = NextResponse.redirect(url);
       dealerRedirect.headers.set("Cache-Control", "no-store, must-revalidate");
@@ -58,7 +64,7 @@ export function proxy(req) {
   // ── Redirect to login if no token, preserving original URL ──────────────
   if (!token && !isLoginPage) {
     // Use full absolute URL so redirect survives domain changes
-    url.pathname = "/login";
+    url.pathname = LOGIN_SHORT_PATH;
     url.searchParams.set("redirect", req.nextUrl.toString());
     const response = NextResponse.redirect(url);
     

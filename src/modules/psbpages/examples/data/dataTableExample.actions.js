@@ -1,5 +1,7 @@
 "use server";
 
+import { requireSignedIn } from "@/core/auth/pageAccess.server.js";
+
 // ── mock data ──────────────────────────────────────────────
 const STATUS_OPTIONS = [
   { label: "Active", value: "active" },
@@ -117,14 +119,17 @@ function queryRows(
 
 // ── exported server actions ────────────────────────────────
 export async function getDataTableFilterOptions() {
+  await requireSignedIn();
   return { statusOptions: STATUS_OPTIONS, roleOptions: ROLE_OPTIONS };
 }
 
 export async function queryDataTableRows(params = {}) {
+  await requireSignedIn();
   return queryRows(params, { paginate: true });
 }
 
 export async function exportDataTable(params = {}) {
+  await requireSignedIn();
   const format = String(params.format || "csv").toLowerCase() === "excel" ? "excel" : "csv";
   const scope = String(params.scope || "all-filtered").toLowerCase();
   const columnKeys = Array.isArray(params.columns)

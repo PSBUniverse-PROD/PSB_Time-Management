@@ -1,6 +1,16 @@
 "use server";
 
+import { requireSignedIn } from "@/core/auth/pageAccess.server.js";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+
+const BLOCKED_TABLES = new Set(["psb_s_dealeraccount", "psb_session_tokens", "psb_sessions"]);
+
+async function requireReader(table) {
+  await requireSignedIn();
+  if (BLOCKED_TABLES.has(String(table ?? "").trim().toLowerCase())) {
+    throw new Error("This table can't be read here.");
+  }
+}
 
 const TABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/;
 const FIELD_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/;
@@ -67,6 +77,7 @@ function escapeCsvValue(value, delimiter) {
 
 // ── query ──────────────────────────────────────────────────
 export async function databindQuery(body = {}) {
+  await requireReader(body?.table);
   try {
     const table = validateTableName(body.table);
     const selectFields = validateFields(body.fields);
@@ -98,6 +109,7 @@ export async function databindQuery(body = {}) {
 
 // ── options ────────────────────────────────────────────────
 export async function databindOptions(body = {}) {
+  await requireReader(body?.table);
   try {
     const table = String(body.table || "").trim();
     const key = String(body.key || "").trim();
@@ -117,6 +129,7 @@ export async function databindOptions(body = {}) {
 
 // ── export ─────────────────────────────────────────────────
 export async function databindExport(body = {}) {
+  await requireReader(body?.table);
   try {
     const table = validateTableName(body.table);
     const format = String(body.format || "csv").toLowerCase() === "excel" ? "excel" : "csv";
@@ -161,6 +174,7 @@ export async function databindExport(body = {}) {
 
 // ── schema ─────────────────────────────────────────────────
 export async function databindSchema(tableName = "") {
+  await requireReader(tableName);
   try {
     const trimmed = String(tableName || "").trim();
     if (!trimmed || !TABLE_NAME_PATTERN.test(trimmed)) {

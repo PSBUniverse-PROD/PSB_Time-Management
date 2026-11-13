@@ -1,6 +1,11 @@
 "use server";
 
+import { requirePageAccess } from "@/core/auth/pageAccess.server.js";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import applicationSetupModule from "../index.js";
+
+// Every action in this file needs a role given this screen's card in Card Module Setup.
+const requireEditor = () => requirePageAccess(applicationSetupModule);
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -25,12 +30,14 @@ function normalizeBoolean(value) {
   return !(text === "false" || text === "0" || text === "n" || text === "no" || text === "f");
 }
 
-const PROTECTED_APP_NAMES = ["PSBUNIVERSE"];
+// The core app can't be deleted or deactivated. It's found by its module_key
+// (from this module's settings), not its name, so renaming the app is safe.
+const CORE_MODULE_KEY = normalizeText(applicationSetupModule?.module_key).toLowerCase();
 
 async function isProtectedApp(supabase, appId) {
-  const { data } = await supabase.from("psb_s_application").select("app_name").eq("app_id", appId).maybeSingle();
-  const name = normalizeText(data?.app_name).toUpperCase();
-  return PROTECTED_APP_NAMES.includes(name);
+  const { data } = await supabase.from("psb_s_application").select("module_key").eq("app_id", appId).maybeSingle();
+  const moduleKey = normalizeText(data?.module_key).toLowerCase();
+  return Boolean(CORE_MODULE_KEY) && moduleKey === CORE_MODULE_KEY;
 }
 
 const ORDER_FIELD_CANDIDATES = ["display_order", "app_order", "sort_order", "order_no"];
@@ -78,6 +85,7 @@ function getApplicationDisplayOrder(app, fallback = 0) {
 // ─── DATA LOADING ──────────────────────────────────────────
 
 export async function loadApplicationSetupData() {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
 
   const [appsResult, rolesResult] = await Promise.all([
@@ -104,6 +112,7 @@ export async function loadApplicationSetupData() {
 // ─── APPLICATION ACTIONS ───────────────────────────────────
 
 export async function createApplicationAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const appName = normalizeText(payload?.app_name);
   const appDesc = sanitizeOptionalText(payload?.app_desc);
@@ -139,6 +148,7 @@ export async function createApplicationAction(payload) {
 }
 
 export async function updateApplicationAction(appId, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   if (await isProtectedApp(supabase, appId)) return null;
   const payload = {};
@@ -169,6 +179,7 @@ export async function updateApplicationAction(appId, updates) {
 }
 
 export async function deactivateApplicationAction(appId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   if (await isProtectedApp(supabase, appId)) return { appId, deactivated: false };
   // Cascade deactivate roles (all of the app's roles in one query)
@@ -179,6 +190,7 @@ export async function deactivateApplicationAction(appId) {
 }
 
 export async function hardDeleteApplicationAction(appId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   if (await isProtectedApp(supabase, appId)) return { appId, permanentlyDeleted: false };
   // Cascade delete roles (all of the app's roles in one query)
@@ -191,6 +203,7 @@ export async function hardDeleteApplicationAction(appId) {
 // ─── ROLE ACTIONS ──────────────────────────────────────────
 
 export async function createRoleAction(payload) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const appId = payload?.app_id;
   const roleName = normalizeText(payload?.role_name);
@@ -212,6 +225,7 @@ export async function createRoleAction(payload) {
 }
 
 export async function updateRoleAction(roleId, updates) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const payload = {};
   if (hasOwn(updates, "role_name")) {
@@ -230,6 +244,7 @@ export async function updateRoleAction(roleId, updates) {
 }
 
 export async function deactivateRoleAction(roleId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("psb_s_role").update({ is_active: false }).eq("role_id", roleId);
   if (error) throw new Error(error.message || "Failed to deactivate role");
@@ -237,6 +252,7 @@ export async function deactivateRoleAction(roleId) {
 }
 
 export async function hardDeleteRoleAction(roleId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("psb_s_role").delete().eq("role_id", roleId);
   if (error) throw new Error(error.message || "Failed to permanently delete role");
@@ -246,6 +262,7 @@ export async function hardDeleteRoleAction(roleId) {
 // ─── ORDER ACTION ──────────────────────────────────────────
 
 export async function saveApplicationOrderAction(appIds) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const requestedIds = (Array.isArray(appIds) ? appIds : [])
     .map((id) => (typeof id === "string" && id.trim() !== "" && Number.isFinite(Number(id)) ? Number(id) : id))
@@ -305,6 +322,7 @@ async function loadRoleForUsers(supabase, roleId) {
 }
 
 export async function loadRoleUsersAction(roleId) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const role = await loadRoleForUsers(supabase, roleId);
 
@@ -333,6 +351,7 @@ export async function loadRoleUsersAction(roleId) {
 }
 
 export async function saveRoleUsersAction(roleId, changes) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   // app_id is resolved from the role, never taken from the client
   const role = await loadRoleForUsers(supabase, roleId);
@@ -372,6 +391,7 @@ const TEMP_ROLE_ID_PREFIX = "tmp-role-";
  * `orderedAppIds` is the screen's app order (temporary ids included).
  */
 export async function saveApplicationSetupBatch(pendingBatch, orderedAppIds) {
+  await requireEditor();
   const supabase = getSupabaseAdmin();
   const batch = pendingBatch || {};
   const appIdMap = {};
@@ -425,3 +445,5 @@ export async function saveApplicationSetupBatch(pendingBatch, orderedAppIds) {
 
   return { appIdMap, deactivatedAppIds: Array.from(deactivatedAppSet), orderedPersistedAppIds };
 }
+
+
