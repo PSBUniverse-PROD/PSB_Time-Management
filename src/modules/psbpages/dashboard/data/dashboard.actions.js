@@ -245,8 +245,9 @@ export async function loadAssignedCardsFromDatabase() {
     if (cardError || !Array.isArray(cardRows) || cardRows.length === 0) return [];
 
     // A card belongs to its group's app: that app's base URL and roles apply.
+    // Hidden cards (is_visible = false) stay off My Apps; access to their pages is unchanged.
     const cards = cardRows
-      .filter((row) => row && isActiveRow(row))
+      .filter((row) => row && isActiveRow(row) && row.is_visible !== false)
       .map((row) => {
         const groupId = String(row?.group_id || row?.app_group_id || row?.card_group_id || "").trim();
         const appId = groupById.get(groupId)?.appId || "";

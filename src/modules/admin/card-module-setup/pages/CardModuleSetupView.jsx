@@ -181,7 +181,7 @@ function useCardActions({
 
   const openEditCardDialog = useCallback((row) => {
     if (isSaving || isMutatingAction) return;
-    setCardDraft({ name: String(row?.card_name || ""), desc: String(row?.card_desc || ""), route_path: String(row?.route_path || ""), icon: String(row?.card_icon || row?.icon || ""), role_ids: [] });
+    setCardDraft({ name: String(row?.card_name || ""), desc: String(row?.card_desc || ""), route_path: String(row?.route_path || ""), icon: String(row?.card_icon || row?.icon || ""), is_visible: row?.is_visible !== false, role_ids: [] });
     setDialog({ kind: "edit-card", target: row, nextIsActive: null });
   }, [isMutatingAction, isSaving, setCardDraft, setDialog]);
 
@@ -198,10 +198,10 @@ function useCardActions({
     setAllCards((prev) => [...prev, mapCardRow({
       card_id: tempCardId, group_id: target.group_id, app_id: target.app_id,
       card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon,
-      is_active: true, display_order: groupCards.length + 1,
+      is_active: true, is_visible: cardDraft.is_visible !== false, display_order: groupCards.length + 1,
     }, prev.length)]);
     setPendingBatch((prev) => ({ ...prev, cardCreates: [...prev.cardCreates, {
-      tempId: tempCardId, payload: { group_id: target.group_id, app_id: target.app_id, card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon, is_active: true },
+      tempId: tempCardId, payload: { group_id: target.group_id, app_id: target.app_id, card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon, is_active: true, is_visible: cardDraft.is_visible !== false },
     }],
       roleAccessAdds: [...(prev.roleAccessAdds || []), ...(cardDraft.role_ids || []).map((rid) => ({ card_id: String(tempCardId), role_id: String(rid) }))],
     }));
@@ -218,12 +218,12 @@ function useCardActions({
     const routePath = String(cardDraft.route_path || "").trim() || "#";
     const cardIcon = String(cardDraft.icon || "").trim() || "table-cells-large";
     const cardId = row.card_id;
-    setAllCards((prev) => prev.map((c, i) => isSameId(c?.card_id, cardId) ? mapCardRow({ ...c, card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon }, i) : c));
+    setAllCards((prev) => prev.map((c, i) => isSameId(c?.card_id, cardId) ? mapCardRow({ ...c, card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon, is_visible: cardDraft.is_visible !== false }, i) : c));
     setPendingBatch((prev) => {
       if (isTempCardId(cardId)) {
-        return { ...prev, cardCreates: prev.cardCreates.map((e) => isSameId(e?.tempId, cardId) ? { ...e, payload: { ...e.payload, card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon } } : e), cardUpdates: removeObjectKey(prev.cardUpdates, cardId) };
+        return { ...prev, cardCreates: prev.cardCreates.map((e) => isSameId(e?.tempId, cardId) ? { ...e, payload: { ...e.payload, card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon, is_visible: cardDraft.is_visible !== false } } : e), cardUpdates: removeObjectKey(prev.cardUpdates, cardId) };
       }
-      return { ...prev, cardUpdates: { ...prev.cardUpdates, [String(cardId)]: mergeUpdatePatch(prev.cardUpdates?.[String(cardId)], { card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon }) } };
+      return { ...prev, cardUpdates: { ...prev.cardUpdates, [String(cardId)]: mergeUpdatePatch(prev.cardUpdates?.[String(cardId)], { card_name: cardName, card_desc: cardDesc, route_path: routePath, icon: cardIcon, is_visible: cardDraft.is_visible !== false }) } };
     });
     setDialog(EMPTY_DIALOG);
     toastSuccess("Card update staged for Save Batch.", "Batching");
@@ -690,6 +690,8 @@ function ContentPane({ h }) {
       return <span><strong className="small">{row?.card_name || "--"}</strong>{row?.card_desc ? <span className="d-block text-muted" style={{ fontSize: "0.72rem" }}>{row.card_desc}</span> : null}{m.t ? <span className={m.c}>{m.t}</span> : null}</span>;
     }},
     { key: "route_path", label: "Route Path", sortable: true },
+    { key: "is_visible", label: "Visible", width: 80, align: "center",
+      render: (row) => (row?.is_visible === false ? <span className="text-muted small">Hidden</span> : <span className="small">Shown</span>) },
     { key: "roles_display", label: "Roles", render: (row) => {
       const cardId = String(row?.card_id ?? "");
       const assignedRoleIds = getCardRoleIds(cardId);
@@ -827,6 +829,16 @@ function CardFormWithRoles({ kind, dialog, cardDraft, setCardDraft, roles, getCa
       </div>
       <div className="row g-3">
         <div className="col-6"><label className="form-label mb-1">Icon</label><Input value={cardDraft.icon} onChange={(e) => setCardDraft((p) => ({ ...p, icon: e.target.value }))} placeholder="bi-file-earmark" /></div>
+        <div className="col-12">
+          <div className="form-check">
+            <input type="checkbox" className="form-check-input" id="card-is-visible"
+              checked={cardDraft.is_visible !== false}
+              onChange={(e) => setCardDraft((p) => ({ ...p, is_visible: e.target.checked }))} />
+            <label className="form-check-label small" htmlFor="card-is-visible">
+              Show on My Apps (unchecked: hidden from the dashboard, but people with access can still open it)
+            </label>
+          </div>
+        </div>
         <div className="col-6"><label className="form-label mb-1">Launch URL</label><Input value={cardDraft.route_path} onChange={(e) => setCardDraft((p) => ({ ...p, route_path: e.target.value }))} placeholder="/admin/status-setup or module:time-tracker/time-tracker" /></div>
       </div>
       <fieldset>
