@@ -88,6 +88,7 @@ export function createEmptyForm(defaultStatusId = null, statuses = []) {
     status_id: defaultStatusId ?? null,
     is_active: inferActiveFromStatus(defaultStatusId, statuses, true),
     last_login_at: "",
+    login_password: "",
   };
 }
 
@@ -104,6 +105,7 @@ export function createFormFromUser(user, fallbackStatusId, statuses) {
     status_id: statusId,
     is_active: hasOwn(user, "is_active") ? isTruthy(user?.is_active) : inferActiveFromStatus(statusId, statuses, true),
     last_login_at: normalizeText(user?.last_login_at),
+    login_password: normalizeText(user?.login_password),
   };
 }
 

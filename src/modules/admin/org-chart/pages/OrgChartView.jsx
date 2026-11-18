@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/shared/components/ui";
 import styles from "./OrgChartView.module.css";
@@ -25,6 +25,16 @@ const NEUTRAL_COLOR = { dot: "#475569", bg: "#f1f5f9", fg: "#334155" };
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 1.5;
 const ZOOM_STEP = 0.1;
+const WHEEL_ZOOM_FACTOR = 1.1;
+const DRAG_THRESHOLD_PX = 5;
+const CARD_WIDTH = 236; // same as .card width in OrgChartView.module.css
+const COLUMN_GAP = 28;
+const ROW_GAP = 64;
+const ELBOW = 28; // a line turns this far above the card it goes into
+const CORNER = 10;
+const DEFAULT_CARD_HEIGHT = 112; // used until the real height is measured
+const LAYOUT_PASSES = 8;
+const LANE_SPACING = 14; // a boss whose sideways line would overlap another's runs this much higher
 
 function initialsOf(name) {
   return String(name || "").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
@@ -38,38 +48,213 @@ function companyShortName(company) {
   return company?.short_name || company?.comp_name || "";
 }
 
-// Each position sits under its first manager on screen (highest on the chart);
-// any other managers show as "Also reports to". A position whose managers are
-// all hidden (e.g. by the branch filter) starts its own tree.
-function buildTree(positions) {
+// Bosses and reports among the shown positions. A boss that is not shown
+// (e.g. hidden by the branch filter) is dropped, so that position starts a new top.
+function buildGraph(positions) {
   const byId = new Map(positions.map((p) => [String(p.position_id), p]));
   const orderOf = new Map(positions.map((p, i) => [String(p.position_id), i]));
-  const childrenOf = new Map();
-  const roots = [];
+  const managersOf = new Map();
+  const reportsOf = new Map(positions.map((p) => [String(p.position_id), []]));
   positions.forEach((p) => {
-    const managers = (p.reports_to_ids || []).map(String).filter((id) => byId.has(id))
+    const id = String(p.position_id);
+    const managers = [...new Set((p.reports_to_ids || []).map(String))]
+      .filter((m) => byId.has(m) && m !== id)
       .sort((a, b) => orderOf.get(a) - orderOf.get(b));
-    const node = { position: p, also: managers.slice(1).map((id) => byId.get(id)) };
-    if (managers.length) childrenOf.set(managers[0], [...(childrenOf.get(managers[0]) || []), node]);
-    else roots.push(node);
+    managersOf.set(id, managers);
+    managers.forEach((m) => reportsOf.get(m).push(id));
   });
-  const attach = (node, seen) => {
-    const id = String(node.position.position_id);
-    if (seen.has(id)) return { ...node, children: [] };
-    const nextSeen = new Set(seen).add(id);
-    return { ...node, children: (childrenOf.get(id) || []).map((child) => attach(child, nextSeen)) };
-  };
-  return roots.map((root) => attach(root, new Set()));
+  return { byId, managersOf, reportsOf };
 }
 
-function parentIdsOf(nodes, out = []) {
-  nodes.forEach((n) => {
-    if (n.children.length) {
-      out.push(String(n.position.position_id));
-      parentIdsOf(n.children, out);
+// Positions for one row, in this order, as close to `wanted` as possible and at
+// least `gap` apart (pool-adjacent-violators on wanted[i] - i * gap).
+function placeInRow(wanted, gap) {
+  const blocks = [];
+  wanted.forEach((w, i) => {
+    let block = { start: i, count: 1, sum: w - i * gap };
+    while (blocks.length) {
+      const last = blocks[blocks.length - 1];
+      if (last.sum / last.count <= block.sum / block.count) break;
+      blocks.pop();
+      block = { start: last.start, count: last.count + block.count, sum: last.sum + block.sum };
     }
+    blocks.push(block);
   });
-  return out;
+  const placed = [];
+  blocks.forEach((b) => {
+    for (let k = 0; k < b.count; k += 1) placed.push(b.sum / b.count + (b.start + k) * gap);
+  });
+  return placed;
+}
+
+// Down from the boss, across, then down into the card, with rounded corners.
+function elbowPath(x1, y1, x2, y2, turnY) {
+  if (Math.abs(x2 - x1) < 1) return `M ${x1} ${y1} V ${y2}`;
+  const dir = x2 > x1 ? 1 : -1;
+  const r = Math.min(CORNER, Math.abs(x2 - x1) / 2, Math.max(0, turnY - y1));
+  return `M ${x1} ${y1} V ${turnY - r} Q ${x1} ${turnY} ${x1 + dir * r} ${turnY}`
+    + ` H ${x2 - dir * r} Q ${x2} ${turnY} ${x2} ${turnY + r} V ${y2}`;
+}
+
+/**
+ * Org-chart layout. A position sits one row below its lowest shown boss and is
+ * pulled to the middle of all its bosses (bosses to the middle of their
+ * reports), so a position with two bosses lands between them. Collapsed
+ * positions hide their reports unless showAll; a report that still has an
+ * expanded boss stays shown.
+ * heights: Map(position id → measured card height).
+ * Returns { nodes: [{ id, position, reportCount, x, y }], lines: [{ key, d }], width, height }.
+ */
+function layoutChart(graph, collapsed, showAll, heights) {
+  const { byId, managersOf, reportsOf } = graph;
+  const isOpen = (id) => showAll || !collapsed.has(id);
+
+  // Shown positions in family order: each top, then everything under it.
+  const shown = new Set();
+  const ordered = [];
+  const visit = (id) => {
+    if (shown.has(id)) return;
+    shown.add(id);
+    ordered.push(id);
+    if (isOpen(id)) reportsOf.get(id).forEach(visit);
+  };
+  [...byId.keys()].filter((id) => managersOf.get(id).length === 0).forEach(visit);
+  if (!ordered.length) return { nodes: [], lines: [], width: 0, height: 0 };
+
+  const bossesOf = (id) => managersOf.get(id).filter((m) => shown.has(m) && isOpen(m));
+  const reportsShown = (id) => (isOpen(id) ? reportsOf.get(id).filter((r) => shown.has(r)) : []);
+  const heightOf = (id) => heights.get(id) ?? DEFAULT_CARD_HEIGHT;
+
+  // Rows: one below the lowest boss.
+  const rowById = new Map();
+  const rowOf = (id, path = new Set()) => {
+    if (rowById.has(id)) return rowById.get(id);
+    if (path.has(id)) return 0; // safety against a reporting loop
+    path.add(id);
+    const bosses = bossesOf(id);
+    const row = bosses.length ? 1 + Math.max(...bosses.map((m) => rowOf(m, path))) : 0;
+    path.delete(id);
+    rowById.set(id, row);
+    return row;
+  };
+  const rows = [];
+  ordered.forEach((id) => {
+    const r = rowOf(id);
+    if (!rows[r]) rows[r] = [];
+    rows[r].push(id);
+  });
+
+  // Columns: settle each row toward its bosses (going down), then toward its reports (going up).
+  const step = CARD_WIDTH + COLUMN_GAP;
+  const x = new Map();
+  rows.forEach((ids) => ids.forEach((id, i) => x.set(id, i * step)));
+  const middleOf = (ids) => ids.reduce((sum, id) => sum + x.get(id), 0) / ids.length;
+  const settle = (ids, linkedTo) => {
+    const items = ids.map((id, i) => {
+      const linked = linkedTo(id);
+      return { id, i, wanted: linked.length ? middleOf(linked) : x.get(id) };
+    }).sort((a, b) => a.wanted - b.wanted || a.i - b.i);
+    const placed = placeInRow(items.map((it) => it.wanted), step);
+    items.forEach((it, k) => x.set(it.id, placed[k]));
+    return items.map((it) => it.id);
+  };
+  for (let pass = 0; pass < LAYOUT_PASSES; pass += 1) {
+    for (let r = 1; r < rows.length; r += 1) rows[r] = settle(rows[r], bossesOf);
+    for (let r = rows.length - 2; r >= 0; r -= 1) rows[r] = settle(rows[r], reportsShown);
+  }
+  const minX = Math.min(...x.values());
+
+  // A card with several bosses gets one entry point per boss across its top
+  // edge, left to right like the bosses, so their lines never meet.
+  const entryX = new Map(); // `${bossId}>${childId}` → x
+  ordered.forEach((id) => {
+    const bosses = bossesOf(id).sort((a, b) => x.get(a) - x.get(b));
+    bosses.forEach((bossId, i) => {
+      entryX.set(`${bossId}>${id}`, x.get(id) + (CARD_WIDTH * (i + 1)) / (bosses.length + 1));
+    });
+  });
+
+  // Each boss's lines into a row share one lane. Bosses whose sideways lines
+  // would overlap get separate lanes (a step higher), so one boss's line never
+  // looks like it reaches another boss's reports.
+  const laneOf = new Map(); // `${bossId}>${row}` → lane (0 = lowest)
+  const lanesInRow = rows.map(() => 1);
+  rows.forEach((ids, r) => {
+    const spans = new Map(); // bossId → [from, to]
+    ids.forEach((id) => bossesOf(id).forEach((bossId) => {
+      const bossMiddle = x.get(bossId) + CARD_WIDTH / 2;
+      const entry = entryX.get(`${bossId}>${id}`);
+      const span = spans.get(bossId) || [bossMiddle, bossMiddle];
+      spans.set(bossId, [Math.min(span[0], entry), Math.max(span[1], entry)]);
+    }));
+    const laneEnds = []; // right end of the last span on each lane
+    [...spans.entries()].sort((a, b) => a[1][0] - b[1][0]).forEach(([bossId, [from, to]]) => {
+      let lane = laneEnds.findIndex((end) => from > end + LANE_SPACING);
+      if (lane === -1) {
+        lane = laneEnds.length;
+        laneEnds.push(to);
+      } else {
+        laneEnds[lane] = to;
+      }
+      laneOf.set(`${bossId}>${r}`, lane);
+    });
+    lanesInRow[r] = Math.max(1, laneEnds.length);
+  });
+
+  // Rows go down by the tallest card in each row, plus room for extra lanes above a row.
+  const rowTop = [];
+  let top = 0;
+  rows.forEach((ids, r) => {
+    if (r > 0) top += (lanesInRow[r] - 1) * LANE_SPACING;
+    rowTop[r] = top;
+    top += Math.max(...ids.map(heightOf)) + ROW_GAP;
+  });
+
+  const nodes = ordered.map((id) => ({
+    id,
+    position: byId.get(id),
+    reportCount: reportsOf.get(id).length,
+    x: x.get(id) - minX,
+    y: rowTop[rowById.get(id)],
+  }));
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const lines = [];
+  nodes.forEach((child) => bossesOf(child.id).forEach((bossId) => {
+    const boss = nodeById.get(bossId);
+    const lane = laneOf.get(`${bossId}>${rowById.get(child.id)}`) || 0;
+    lines.push({
+      key: `${bossId}-${child.id}`,
+      d: elbowPath(
+        boss.x + CARD_WIDTH / 2, boss.y + heightOf(bossId),
+        entryX.get(`${bossId}>${child.id}`) - minX, child.y,
+        child.y - ELBOW - lane * LANE_SPACING,
+      ),
+    });
+  }));
+
+  return {
+    nodes,
+    lines,
+    width: Math.max(...nodes.map((n) => n.x)) + CARD_WIDTH,
+    height: top - ROW_GAP,
+  };
+}
+
+function clampZoom(value) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
+}
+
+// Position of el inside root in chart units (ignores the zoom/pan transform).
+function offsetIn(el, root) {
+  let x = 0;
+  let y = 0;
+  let node = el;
+  while (node && node !== root) {
+    x += node.offsetLeft;
+    y += node.offsetTop;
+    node = node.offsetParent;
+  }
+  return node === root ? { x, y } : null;
 }
 
 function VacantIcon({ size = 18 }) {
@@ -102,7 +287,12 @@ export default function OrgChartView({
   const [branch, setBranch] = useState("");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(() => new Set());
-  const [zoom, setZoom] = useState(1);
+  // Pan (x, y in screen px) and zoom of the chart inside the viewport.
+  const [view, setView] = useState({ x: 0, y: 0, zoom: 1 });
+  const zoom = view.zoom;
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef(null); // { startX, startY, x, y, moved, pointerId }
+  const [cardHeights, setCardHeights] = useState(() => new Map());
   const [selected, setSelected] = useState(null); // { positionId, userId }
   const viewportRef = useRef(null);
   const treeRef = useRef(null);
@@ -121,7 +311,7 @@ export default function OrgChartView({
     () => [...new Set(companyPositions.map((p) => p.branch).filter(Boolean))].sort(), [companyPositions]);
   const visiblePositions = useMemo(
     () => companyPositions.filter((p) => !branch || !p.branch || p.branch === branch), [companyPositions, branch]);
-  const tree = useMemo(() => buildTree(visiblePositions), [visiblePositions]);
+  const graph = useMemo(() => buildGraph(visiblePositions), [visiblePositions]);
 
   const colors = useMemo(() => {
     const map = new Map([[COMPANY_LEVEL, COMPANY_LEVEL_COLOR]]);
@@ -138,7 +328,7 @@ export default function OrgChartView({
   const colorOf = (p) => (String(p?.comp_id) === companyId ? colors.map.get(deptKeyOf(p)) : null) || NEUTRAL_COLOR;
 
   const q = query.trim().toLowerCase();
-  const matches = (p) => !q || [p.position_name, p.department_name, ...p.people.map((x) => x.full_name)]
+  const matches = (p) => !q || [p.position_name, p.position_code, p.department_name, p.department_code, ...p.people.map((x) => x.full_name)]
     .some((v) => String(v || "").toLowerCase().includes(q));
 
   useEffect(() => {
@@ -148,10 +338,24 @@ export default function OrgChartView({
     setCollapsed(new Set());
   }, [focusMe, mySeat]);
 
+  // Move the chart so the picked card is in view (only when it is outside it).
   useEffect(() => {
     if (!selected || !selected.positionId) return;
-    const element = document.querySelector(`[data-position-id="${String(selected.positionId)}"]`);
-    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const box = viewportRef.current, el = treeRef.current;
+    const card = el?.querySelector(`[data-position-id="${String(selected.positionId)}"]`);
+    if (!box || !card) return;
+    const boxRect = box.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const inView = cardRect.left >= boxRect.left && cardRect.right <= boxRect.right
+      && cardRect.top >= boxRect.top && cardRect.bottom <= boxRect.bottom;
+    if (inView) return;
+    const at = offsetIn(card, el);
+    if (!at) return;
+    setView((v) => ({
+      ...v,
+      x: box.clientWidth / 2 - (at.x + card.offsetWidth / 2) * v.zoom,
+      y: box.clientHeight / 2 - (at.y + card.offsetHeight / 2) * v.zoom,
+    }));
   }, [selected]);
 
   const chooseCompany = (id) => {
@@ -168,16 +372,101 @@ export default function OrgChartView({
     return next;
   });
 
-  const changeZoom = (delta) => setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((z + delta) * 10) / 10)));
-  const fitToScreen = useCallback(() => {
+  // Place the chart at a zoom level: centered across, near the top.
+  const placeAt = useCallback((nextZoom) => {
     const box = viewportRef.current, el = treeRef.current;
     if (!box || !el) return;
-    const rect = el.getBoundingClientRect();
-    const naturalW = rect.width / zoom, naturalH = rect.height / zoom;
-    if (!naturalW || !naturalH) return;
-    const next = Math.min(1, (box.clientWidth - 48) / naturalW, (box.clientHeight - 96) / naturalH);
-    setZoom(Math.max(ZOOM_MIN, Math.floor(next * 100) / 100));
-  }, [zoom]);
+    const z = clampZoom(nextZoom);
+    setView({ zoom: z, x: Math.max(24, (box.clientWidth - el.offsetWidth * z) / 2), y: 28 });
+  }, []);
+
+  // Zoom while keeping the chart point under (px, py) — viewport px — in place.
+  const zoomAt = useCallback((nextZoom, px, py) => setView((v) => {
+    const z = clampZoom(typeof nextZoom === "function" ? nextZoom(v.zoom) : nextZoom);
+    if (z === v.zoom) return v;
+    return { zoom: z, x: px - ((px - v.x) / v.zoom) * z, y: py - ((py - v.y) / v.zoom) * z };
+  }), []);
+
+  const changeZoom = (delta) => {
+    const box = viewportRef.current;
+    if (!box) return;
+    zoomAt((z) => Math.round((z + delta) * 10) / 10, box.clientWidth / 2, box.clientHeight / 2);
+  };
+  const fitToScreen = useCallback(() => {
+    const box = viewportRef.current, el = treeRef.current;
+    if (!box || !el || !el.offsetWidth || !el.offsetHeight) return;
+    placeAt(Math.floor(Math.min(1, (box.clientWidth - 48) / el.offsetWidth, (box.clientHeight - 96) / el.offsetHeight) * 100) / 100);
+  }, [placeAt]);
+
+  // New company or branch: start at 100%, centered.
+  useLayoutEffect(() => { placeAt(1); }, [companyId, branch, placeAt]);
+
+  // Mouse wheel zooms toward the pointer. Added by hand: React's onWheel is passive and can't stop the page scrolling.
+  useEffect(() => {
+    const box = viewportRef.current;
+    if (!box) return undefined;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const rect = box.getBoundingClientRect();
+      zoomAt((z) => z * (e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR), e.clientX - rect.left, e.clientY - rect.top);
+    };
+    box.addEventListener("wheel", onWheel, { passive: false });
+    return () => box.removeEventListener("wheel", onWheel);
+  }, [zoomAt, companies.length]);
+
+  // Drag anywhere to move the chart. A press that moves less than DRAG_THRESHOLD_PX is a normal click.
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, x: view.x, y: view.y, moved: false, pointerId: e.pointerId };
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+      d.moved = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setIsDragging(true);
+    }
+    setView((v) => ({ ...v, x: d.x + dx, y: d.y + dy }));
+  };
+  const endDrag = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    if (!d.moved) { dragRef.current = null; return; }
+    setIsDragging(false);
+    // Kept until the click that follows a drag is swallowed below.
+    window.setTimeout(() => { dragRef.current = null; }, 0);
+  };
+  const onClickCapture = (e) => {
+    if (!dragRef.current?.moved) return;
+    e.stopPropagation();
+    e.preventDefault();
+    dragRef.current = null;
+  };
+
+  // Where every card and line goes (search shows everything, like before).
+  const layout = useMemo(
+    () => layoutChart(graph, collapsed, Boolean(q), cardHeights),
+    [graph, collapsed, q, cardHeights]);
+
+  // Real card heights (several people or long names make a card taller), so rows
+  // never overlap. Only stores a change, so it settles after one extra render.
+  useLayoutEffect(() => {
+    const el = treeRef.current;
+    if (!el) return;
+    let changed = false;
+    const next = new Map(cardHeights);
+    el.querySelectorAll("[data-position-id]").forEach((card) => {
+      const id = card.getAttribute("data-position-id");
+      if (next.get(id) !== card.offsetHeight) {
+        next.set(id, card.offsetHeight);
+        changed = true;
+      }
+    });
+    if (changed) setCardHeights(next);
+  });
 
   // ── Details panel ──
   const selectedPosition = selected ? positionById.get(String(selected.positionId)) || null : null;
@@ -227,7 +516,7 @@ export default function OrgChartView({
     const people = p.people;
     const single = people.length === 1 ? people[0] : null;
     const isSelected = selectedPosition && String(selectedPosition.position_id) === String(p.position_id);
-    const childCount = node.children.length;
+    const childCount = node.reportCount;
     const isCollapsed = !q && collapsed.has(String(p.position_id));
     const cls = [
       styles.card,
@@ -279,28 +568,13 @@ export default function OrgChartView({
             </button>
           ) : null}
         </div>
-        {node.also.length ? (
-          <span className={styles.alsoTag}>Also reports to {node.also.map((m) => m.position_name).join(", ")}</span>
-        ) : null}
       </div>
     );
   };
 
-  const renderLevel = (nodes, isRoot = false) => (
-    <ul className={isRoot ? styles.rootList : undefined}>
-      {nodes.map((node) => {
-        const showChildren = node.children.length > 0 && (q || !collapsed.has(String(node.position.position_id)));
-        return (
-          <li key={String(node.position.position_id)}>
-            {renderCard(node)}
-            {showChildren ? renderLevel(node.children) : null}
-          </li>
-        );
-      })}
-    </ul>
-  );
-
-  const allParentIds = useMemo(() => parentIdsOf(tree), [tree]);
+  const allParentIds = useMemo(
+    () => [...graph.reportsOf.entries()].filter(([, reports]) => reports.length).map(([id]) => id),
+    [graph]);
   const panelColor = selectedPosition ? colorOf(selectedPosition) : NEUTRAL_COLOR;
 
   return (
@@ -348,7 +622,7 @@ export default function OrgChartView({
                 <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
               </svg>
               <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
-                placeholder="Find a person or position" aria-label="Find a person or position" />
+                placeholder="Find a person, position or code" aria-label="Find a person, position or code" />
             </label>
 
             {colors.legend.length || colors.hasCompanyLevel ? (
@@ -369,9 +643,25 @@ export default function OrgChartView({
 
           <div className={styles.body}>
             <section className={styles.chartBox} aria-label="Chart">
-              <div ref={viewportRef} className={styles.viewport}>
-                {tree.length ? (
-                  <div ref={treeRef} className={styles.tree} style={{ zoom }}>{renderLevel(tree, true)}</div>
+              <div ref={viewportRef} className={`${styles.viewport} ${isDragging ? styles.viewportDragging : ""}`}
+                onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}
+                onClickCapture={onClickCapture}>
+                {layout.nodes.length ? (
+                  <div ref={treeRef} className={styles.tree}
+                    style={{
+                      width: layout.width,
+                      height: layout.height,
+                      transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
+                    }}>
+                    <svg className={styles.lines} width={layout.width} height={layout.height} aria-hidden="true">
+                      {layout.lines.map((line) => <path key={line.key} d={line.d} />)}
+                    </svg>
+                    {layout.nodes.map((node) => (
+                      <div key={node.id} className={styles.node} style={{ left: node.x, top: node.y }}>
+                        {renderCard(node)}
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   <div className={styles.emptyBox}>No positions yet for this company. Add them in Organization Setup.</div>
                 )}

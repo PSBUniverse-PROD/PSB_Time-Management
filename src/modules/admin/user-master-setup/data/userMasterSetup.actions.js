@@ -1,8 +1,42 @@
 "use server";
 
+import crypto from "node:crypto";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
 import { requireUserMasterEditor } from "@/modules/admin/company-department-setup/data/orgAccess.server.js";
 import { refreshUserSeats } from "@/modules/admin/company-department-setup/data/orgSeats.server.js";
+
+// Stored copy of the password an admin sets, so User Master Setup can show it.
+// AES-256-GCM; key from USER_PW_SECRET (set a strong value in the environment).
+// Stored as base64 of iv(12) + authTag(16) + ciphertext. decrypt returns "" for
+// blank/old/undecryptable values, so existing users just show no password.
+const PW_KEY = crypto.createHash("sha256")
+  .update(String(process.env.USER_PW_SECRET || "psb-user-master-setup-default-key"))
+  .digest();
+
+function encryptSecret(plain) {
+  const text = String(plain ?? "");
+  if (!text) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", PW_KEY, iv);
+  const enc = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), enc]).toString("base64");
+}
+
+function decryptSecret(stored) {
+  const text = String(stored ?? "").trim();
+  if (!text) return "";
+  try {
+    const raw = Buffer.from(text, "base64");
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(12, 28);
+    const data = raw.subarray(28);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", PW_KEY, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+  } catch {
+    return "";
+  }
+}
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -147,6 +181,7 @@ function mapUserMasterDetail(row) {
     company_name: normalizeText(readFirstText(row, ["comp_name", "company_name", "company"], "")),
     department_name: normalizeText(readFirstText(row, ["dept_name", "department_name", "department"], "")),
     last_login_at: normalizeText(readFirstText(row, ["last_login_at", "last_sign_in_at"], "")),
+    login_password: decryptSecret(row?.login_password),
   };
 }
 
@@ -508,6 +543,7 @@ export async function createUserAction(payload, { skipResultRow = false } = {}) 
   const createPayload = buildWritablePayload(payload, { includeDefaultActive: true });
   const pw = normalizePassword(payload?.password);
   if (!pw) throw new Error("Password is required for new users.");
+  createPayload.login_password = encryptSecret(pw);
   createPayload.email = normalizeEmail(createPayload.email);
   if (!createPayload.email) throw new Error("Email is required.");
 
@@ -578,6 +614,8 @@ export async function updateUserAction(userId, updates, { skipResultRow = false 
     const existingAuth = await findAuthUserByEmail(supabase, updatePayload.email);
     if (existingAuth?.id) updatePayload.auth_user_id = existingAuth.id;
   }
+
+  if (pw) updatePayload.login_password = encryptSecret(pw);
 
   if (Object.keys(updatePayload).length === 0) throw new Error("No valid user updates supplied.");
 

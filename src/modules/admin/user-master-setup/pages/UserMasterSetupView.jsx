@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faXmark, faCheck } from "@fortawesome/free-solid-svg-icons";
+import { faXmark, faCheck, faEye, faEyeSlash, faCopy } from "@fortawesome/free-solid-svg-icons";
 import { Badge, Button, Card, Input, Modal, StatusBadge, TableZ, toastError, toastInfo, toastSuccess, toastWarning } from "@/shared/components/ui";
 import {
   TABS, EMPTY_LOOKUPS, normalizeText, normalizeOptionalText, asChoiceValue, rowIdOf, isTemporaryId,
@@ -43,6 +43,7 @@ function useUserPanel({
   const [baselineAccessRows, setBaselineAccessRows] = useState([]);
 
   const [enableNewPassword, setEnableNewPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [newPasswordValue, setNewPasswordValue] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [baselineSnapshot, setBaselineSnapshot] = useState(buildPanelSnapshot(createEmptyForm(), [], false, "", ""));
@@ -231,6 +232,7 @@ function useUserPanel({
     form, setForm, accessRows, setAccessRows, accessEditor, setAccessEditor,
     enableNewPassword, setEnableNewPassword, newPasswordValue, setNewPasswordValue,
     confirmNewPassword, setConfirmNewPassword,
+    showCurrentPassword, setShowCurrentPassword,
     showDiscardDraftModal, pendingAccessDeactivateRow,
     setActiveTab, setPanelMode,
     openExistingUserPanel, openAddUserPanel, closePanel, resetPanelState,
@@ -538,6 +540,7 @@ function UserPanelSection({
   activeTab, form, setForm, accessRows, setAccessRows, accessEditor, setAccessEditor,
   enableNewPassword, setEnableNewPassword, newPasswordValue, setNewPasswordValue,
   confirmNewPassword, setConfirmNewPassword,
+  showCurrentPassword, setShowCurrentPassword,
   selectedStatusLabel, departmentsForCompany, roleOptionsForAccessEditor, lookups,
   setPendingAccessDeactivateRow,
   setActiveTab, setPanelMode, closePanel,
@@ -673,6 +676,23 @@ function UserPanelSection({
               <div className="row g-2">
                 <div className="col-12"><label className="form-label mb-1">Last Login</label><Input value={formatDateTime(form?.last_login_at)} readOnly disabled /></div>
                 <div className="col-12">
+                  <label className="form-label mb-1">Current Password</label>
+                  {form?.login_password ? (
+                    <div className="input-group">
+                      <input type={showCurrentPassword ? "text" : "password"} className="form-control" value={form.login_password} readOnly />
+                      <Button type="button" variant="ghost" onClick={() => setShowCurrentPassword((v) => !v)} title={showCurrentPassword ? "Hide" : "Show"}>
+                        <FontAwesomeIcon icon={showCurrentPassword ? faEyeSlash : faEye} />
+                      </Button>
+                      <Button type="button" variant="ghost" title="Copy"
+                        onClick={() => { navigator.clipboard?.writeText(form.login_password).then(() => toastSuccess("Password copied.", "User Master"), () => toastError("Could not copy.")); }}>
+                        <FontAwesomeIcon icon={faCopy} />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Input value="No saved password. Set one below and save." readOnly disabled />
+                  )}
+                </div>
+                <div className="col-12">
                   <div className="form-check mt-1">
                     <input id="umsp-set-password" className="form-check-input" type="checkbox" checked={enableNewPassword}
                       onChange={(e) => { setEnableNewPassword(e.target.checked); if (!e.target.checked) { setNewPasswordValue(""); setConfirmNewPassword(""); } }} disabled={!panelEditable || isPanelLoading} />
@@ -795,6 +815,7 @@ export default function UserMasterSetupView({ users, totalUsers, lookups }) {
         enableNewPassword={h.enableNewPassword} setEnableNewPassword={h.setEnableNewPassword}
         newPasswordValue={h.newPasswordValue} setNewPasswordValue={h.setNewPasswordValue}
         confirmNewPassword={h.confirmNewPassword} setConfirmNewPassword={h.setConfirmNewPassword}
+        showCurrentPassword={h.showCurrentPassword} setShowCurrentPassword={h.setShowCurrentPassword}
         selectedStatusLabel={h.selectedStatusLabel} departmentsForCompany={h.departmentsForCompany}
         roleOptionsForAccessEditor={h.roleOptionsForAccessEditor} lookups={h.lookups}
         setPendingAccessDeactivateRow={h.setPendingAccessDeactivateRow}

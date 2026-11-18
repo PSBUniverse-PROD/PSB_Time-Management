@@ -31,8 +31,8 @@ export async function loadOrgChartData() {
   const [companiesRes, departmentsRes, positionsRes, reportsRes, seatsRes, usersRes, ranksRes] = await Promise.all([
     supabase.from("psb_s_company").select("comp_id, comp_name, short_name").eq("is_active", true)
       .order("comp_name", { ascending: true }),
-    supabase.from("psb_s_department").select("dept_id, comp_id, dept_name").eq("is_active", true),
-    supabase.from("psb_s_position").select("position_id, comp_id, dept_id, position_name, branch, chart_level, display_order")
+    supabase.from("psb_s_department").select("dept_id, comp_id, dept_name, dept_code").eq("is_active", true),
+    supabase.from("psb_s_position").select("position_id, comp_id, dept_id, position_name, position_code, branch, chart_level, display_order")
       .eq("is_active", true),
     supabase.from("psb_m_positionreport").select("position_id, reports_to_position_id"),
     supabase.from("psb_m_userposition").select("user_id, position_id, is_primary").eq("is_active", true),
@@ -86,7 +86,9 @@ export async function loadOrgChartData() {
     comp_id: p.comp_id,
     dept_id: p.dept_id,
     department_name: p.dept_id != null ? deptById.get(String(p.dept_id))?.dept_name || "" : "",
+    department_code: p.dept_id != null ? deptById.get(String(p.dept_id))?.dept_code || "" : "",
     position_name: p.position_name || "",
+    position_code: p.position_code || "",
     branch: normalizeBranch(p.branch),
     chart_level: p.chart_level,
     reports_to_ids: reportsByPosition.get(String(p.position_id)) || [],

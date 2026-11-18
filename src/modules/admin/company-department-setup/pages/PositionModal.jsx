@@ -35,6 +35,17 @@ function peopleOf(position) {
   return (position?.holders || []).map((h) => h.full_name).join(", ");
 }
 
+/**
+ * Reporting goes position to position, so positions under a shared position
+ * report to everyone in it. Returns the warning text, or null when the
+ * position has fewer than 2 people or nothing reports to it.
+ */
+export function sharedSeatNote(peopleCount, reportCount) {
+  if (peopleCount < 2 || reportCount < 1) return null;
+  const reports = reportCount === 1 ? "1 position reports" : `${reportCount} positions report`;
+  return `${peopleCount} people share this position and ${reports} to it. Those report to all ${peopleCount} of them. If they have different bosses, give each person their own position.`;
+}
+
 function SearchIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -57,7 +68,7 @@ function PreviewCard({ title, subtitle, vacant = false, current = false }) {
 }
 
 /**
- * Add / Edit Position. Saves straight away (not part of Save Batch).
+ * Add / Edit Position. Saves straight away.
  * departments: the company's saved departments; positions: the company's positions.
  */
 export default function PositionModal({ company, position, departments, positions, users, ranks = [], defaultDeptId = "", onClose, onSaved }) {
@@ -92,7 +103,7 @@ export default function PositionModal({ company, position, departments, position
     const groups = new Map();
     otherPositions.forEach((p) => {
       const deptName = p.dept_id != null ? deptNameById.get(String(p.dept_id)) || "Department" : "Company-level";
-      if (q && ![p.position_name, deptName, peopleOf(p)].some((v) => String(v || "").toLowerCase().includes(q))) return;
+      if (q && ![p.position_name, p.position_code, deptName, peopleOf(p)].some((v) => String(v || "").toLowerCase().includes(q))) return;
       const key = p.dept_id != null ? String(p.dept_id) : "";
       if (!groups.has(key)) groups.set(key, { key, name: deptName, items: [] });
       groups.get(key).items.push(p);
@@ -131,6 +142,9 @@ export default function PositionModal({ company, position, departments, position
     ? (positions || []).filter((p) => (p.reports_to_ids || []).some((id) => String(id) === String(position.position_id)))
     : [];
   const previewPeople = holderRows.map((r) => r.name).join(", ");
+  // Ticked "Reports to" positions with 2+ people: this position reports to all of them.
+  const sharedManagers = managers.filter((m) => (m.holders || []).length > 1);
+  const ownSharedNote = sharedSeatNote(holderRows.length, directReports.length);
 
   const toggleReport = (id) => setReportsTo((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   const addHolder = (user) => {
@@ -170,7 +184,7 @@ export default function PositionModal({ company, position, departments, position
 
   const footer = (
     <div className={styles.footer}>
-      <span className={styles.hint}>Saves straight away. No Save Batch needed.</span>
+      <span className={styles.hint}>Saves straight away.</span>
       <div className="d-flex gap-2">
         <Button type="button" variant="ghost" onClick={onClose} disabled={isSaving}>Cancel</Button>
         <Button type="button" variant="primary" onClick={handleSave} loading={isSaving}>{isEdit ? "Save" : "Add Position"}</Button>
@@ -266,11 +280,17 @@ export default function PositionModal({ company, position, departments, position
             ) : (
               <span className={styles.hint}>Nobody yet. This position will be at the top of the chart.</span>
             )}
+            {sharedManagers.map((m) => (
+              <div key={`shared-${m.position_id}`} className="notice-banner notice-banner-warning" role="status">
+                <strong>{m.position_name}</strong> has {m.holders.length} people. This position will report to all of them.
+                If it should report to only one, give each lead their own position.
+              </div>
+            ))}
             <div className={styles.listBox}>
               <label className={styles.searchRow}>
                 <SearchIcon />
                 <input type="search" value={reportSearch} onChange={(e) => setReportSearch(e.target.value)}
-                  placeholder="Search positions or people" aria-label="Search positions or people" />
+                  placeholder="Search positions, people or codes" aria-label="Search positions, people or codes" />
               </label>
               <div className={styles.listScroll}>
                 {reportGroups.length === 0 ? (
@@ -299,6 +319,9 @@ export default function PositionModal({ company, position, departments, position
           {/* 4 · People */}
           <section className={styles.section}>
             <span className={styles.sectionLabel}>4 · People in this position</span>
+            {ownSharedNote ? (
+              <div className="notice-banner notice-banner-warning" role="status">{ownSharedNote}</div>
+            ) : null}
             {holderRows.length ? (
               <div className={styles.people}>
                 {holderRows.map((row) => (

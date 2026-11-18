@@ -8,7 +8,7 @@ import {
 // Thin wrappers over the shared card-based check (src/core/auth/pageAccess.server.js).
 export const ORG_SIGNED_OUT = SIGNED_OUT_MESSAGE;
 
-/** Organization Setup: positions, ranks, the company/department Save Batch and the position loader. */
+/** Organization Setup: companies, departments, positions, ranks and the position loader. */
 export async function requireOrgEditor() {
   return requirePageAccess(companyDepartmentSetupModule);
 }
