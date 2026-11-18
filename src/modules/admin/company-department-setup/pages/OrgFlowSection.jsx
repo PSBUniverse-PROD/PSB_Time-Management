@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { Button, Input, Modal, StatusBadge } from "@/shared/components/ui";
-import { isSameId, isTempCompanyId, isTempDepartmentId } from "../data/companyDepartmentSetup.data.js";
-import { positionLabel } from "./PositionModal.jsx";
+import { isSameId } from "../data/companyDepartmentSetup.data.js";
+import { positionLabel, sharedSeatNote } from "./PositionModal.jsx";
 import styles from "./OrgFlowSection.module.css";
 
 // Department key for positions with no department (Company Head, etc.).
@@ -11,16 +11,6 @@ export const COMPANY_LEVEL_KEY = "company-level";
 
 export function deptKeyOf(position) {
   return position?.dept_id == null ? COMPANY_LEVEL_KEY : String(position.dept_id);
-}
-
-function batchMarker(bs) {
-  const map = {
-    hardDeleted: { t: "Deleted", c: "psb-batch-marker psb-batch-marker-deleted" },
-    deleted: { t: "Deactivated", c: "psb-batch-marker psb-batch-marker-deleted" },
-    created: { t: "New", c: "psb-batch-marker psb-batch-marker-new" },
-    updated: { t: "Edited", c: "psb-batch-marker psb-batch-marker-edited" },
-  };
-  return map[bs] || { t: "", c: "" };
 }
 
 function shortNameOf(company) {
@@ -33,30 +23,22 @@ function initialsOf(name) {
 }
 
 function RowMarker({ row }) {
-  const m = batchMarker(row?.__batchState || "");
-  if (m.t) return <span className={m.c}>{m.t}</span>;
   if (row && !row.is_active_bool) return <StatusBadge status="inactive" />;
   return null;
 }
 
-// Edit / Deactivate or Restore / Delete or Undo delete, for the picked company or department (staged in Save Batch).
-function LifecycleButtons({ row, isPendingDeactivation, disabled, onEdit, onRestore, onDeactivate, onDelete, onUndoDelete }) {
+// Edit / Deactivate or Restore / Delete for the picked company or department. Each saves straight away.
+function LifecycleButtons({ row, disabled, onEdit, onRestore, onDeactivate, onDelete }) {
   if (!row) return null;
-  const isHardDeleted = row.__batchState === "hardDeleted";
-  const canRestore = !row.is_active_bool || isPendingDeactivation;
   return (
     <div className="d-flex flex-wrap gap-1">
-      <Button type="button" size="sm" variant="secondary" disabled={disabled || isHardDeleted} onClick={() => onEdit(row)}>Edit</Button>
-      {canRestore ? (
-        <Button type="button" size="sm" variant="secondary" disabled={disabled || isHardDeleted} onClick={() => onRestore(row)}>Restore</Button>
+      <Button type="button" size="sm" variant="secondary" disabled={disabled} onClick={() => onEdit(row)}>Edit</Button>
+      {!row.is_active_bool ? (
+        <Button type="button" size="sm" variant="secondary" disabled={disabled} onClick={() => onRestore(row)}>Restore</Button>
       ) : (
-        <Button type="button" size="sm" variant="warning" disabled={disabled || isHardDeleted} onClick={() => onDeactivate(row)}>Deactivate</Button>
+        <Button type="button" size="sm" variant="warning" disabled={disabled} onClick={() => onDeactivate(row)}>Deactivate</Button>
       )}
-      {isHardDeleted ? (
-        <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => onUndoDelete(row)}>Undo delete</Button>
-      ) : (
-        <Button type="button" size="sm" variant="danger" disabled={disabled} onClick={() => onDelete(row)}>Delete</Button>
-      )}
+      <Button type="button" size="sm" variant="danger" disabled={disabled} onClick={() => onDelete(row)}>Delete</Button>
     </div>
   );
 }
@@ -81,23 +63,21 @@ function Hint({ children }) {
 /**
  * Organization Setup, left to right: pick a company, then a department, then
  * a position; the last column shows its reporting line and people.
- * Companies and departments are staged for Save Batch; positions and people
- * save straight away (through the handlers passed in).
+ * Everything saves straight away (through the handlers passed in).
  */
 export default function OrgFlowSection({
-  decoratedCompanies = [], decoratedDepartments = [], selectedCompany, isSaving, isMutatingAction,
-  pendingDeactivatedCompanyIds, pendingDeactivatedDepartmentIds,
+  decoratedCompanies = [], decoratedDepartments = [], selectedCompany, isBusy = false,
   onSelectCompany, openAddCompanyDialog, openEditCompanyDialog, openToggleCompanyDialog,
-  openDeactivateCompanyDialog, stageHardDeleteCompany, unstageHardDeleteCompany,
+  openDeactivateCompanyDialog, deleteCompany,
   openAddDepartmentDialog, openEditDepartmentDialog, openToggleDepartmentDialog,
-  openDeactivateDepartmentDialog, stageHardDeleteDepartment, unstageHardDeleteDepartment,
+  openDeactivateDepartmentDialog, deleteDepartment,
   allPositions = [], companyPositions = [], isPositionBusy = false, ranks = [],
   selectedDeptKey, onSelectDept, selectedPositionId, onSelectPosition,
   onAddPosition, onEditPosition, onTogglePosition, onDeletePosition, onRemovePerson, onMovePosition,
 }) {
+  const [companySearch, setCompanySearch] = useState("");
   const [deptSearch, setDeptSearch] = useState("");
   const [confirmBox, setConfirmBox] = useState(null);
-  const isBusy = Boolean(isSaving || isMutatingAction);
   const askConfirm = (title, message, label, onConfirm) => setConfirmBox({ title, message, label, onConfirm });
   const rankNameById = useMemo(() => new Map(ranks.map((r) => [String(r.rank_id), r.rank_name])), [ranks]);
   const levelLabel = (level) => rankNameById.get(String(level)) || "";
@@ -116,21 +96,26 @@ export default function OrgFlowSection({
     companyPositions.forEach((p) => counts.set(deptKeyOf(p), (counts.get(deptKeyOf(p)) || 0) + 1));
     return counts;
   }, [companyPositions]);
+  const visibleCompanies = useMemo(() => {
+    const q = companySearch.trim().toLowerCase();
+    if (!q) return decoratedCompanies;
+    return decoratedCompanies.filter((c) => [c.comp_name, c.comp_short_name, c.comp_code]
+      .some((v) => String(v || "").toLowerCase().includes(q)));
+  }, [decoratedCompanies, companySearch]);
   const visibleDepartments = useMemo(() => {
     const q = deptSearch.trim().toLowerCase();
     if (!q) return decoratedDepartments;
-    return decoratedDepartments.filter((d) => [d.dept_name, d.dept_short_name]
+    return decoratedDepartments.filter((d) => [d.dept_name, d.dept_short_name, d.dept_code]
       .some((v) => String(v || "").toLowerCase().includes(q)));
   }, [decoratedDepartments, deptSearch]);
 
   const companyRow = decoratedCompanies.find((c) => isSameId(c.comp_id, selectedCompany?.comp_id)) || null;
-  const companySaved = Boolean(selectedCompany) && !isTempCompanyId(selectedCompany.comp_id);
   const isCompanyLevel = selectedDeptKey === COMPANY_LEVEL_KEY;
   const deptRow = selectedDeptKey && !isCompanyLevel
     ? decoratedDepartments.find((d) => isSameId(d.dept_id, selectedDeptKey)) || null
     : null;
   const deptLabel = isCompanyLevel ? "Company-level" : deptRow?.dept_name || "";
-  const deptSaved = isCompanyLevel || (deptRow && !isTempDepartmentId(deptRow.dept_id));
+  const deptSaved = isCompanyLevel || Boolean(deptRow);
 
   const deptPositions = selectedDeptKey ? companyPositions.filter((p) => deptKeyOf(p) === selectedDeptKey) : [];
   // Positions arrive sorted by rank, then order, so groups come out top rank first.
@@ -152,6 +137,8 @@ export default function OrgFlowSection({
   const directReports = selectedPosition
     ? companyPositions.filter((p) => (p.reports_to_ids || []).some((id) => isSameId(id, selectedPosition.position_id))) : [];
   const goToPosition = (p) => { onSelectDept(deptKeyOf(p)); onSelectPosition(p.position_id); };
+  const selectedSharedNote = selectedPosition
+    ? sharedSeatNote((selectedPosition.holders || []).length, directReports.length) : null;
 
   const steps = [
     { n: 1, label: "Company", value: selectedCompany?.comp_name || "" },
@@ -160,7 +147,7 @@ export default function OrgFlowSection({
     { n: 4, label: "People", value: selectedPosition ? peopleOf(selectedPosition) || "Vacant" : "" },
   ];
 
-  const canAddPosition = companySaved && Boolean(selectedDeptKey) && deptSaved && !isPositionBusy;
+  const canAddPosition = Boolean(selectedCompany) && Boolean(selectedDeptKey) && deptSaved && !isPositionBusy;
 
   return (
     <>
@@ -186,15 +173,13 @@ export default function OrgFlowSection({
             <>
               <LifecycleButtons
                 row={companyRow}
-                isPendingDeactivation={pendingDeactivatedCompanyIds?.has(String(companyRow?.comp_id ?? ""))}
                 disabled={isBusy}
                 onEdit={openEditCompanyDialog}
                 onRestore={openToggleCompanyDialog}
                 onDeactivate={openDeactivateCompanyDialog}
                 onDelete={(row) => askConfirm("Delete Company",
-                  `Permanently delete ${row?.comp_name || "this company"}? It is removed when you press Save Batch.`,
-                  "Delete Company", () => stageHardDeleteCompany(row))}
-                onUndoDelete={unstageHardDeleteCompany}
+                  `Permanently delete ${row?.comp_name || "this company"}? This cannot be undone. Delete its positions and departments first; a company still in use elsewhere can only be deactivated.`,
+                  "Delete Company", () => deleteCompany(row))}
               />
               <Button type="button" size="sm" variant="success" className="w-100" disabled={isBusy} onClick={openAddCompanyDialog}>
                 + Add Company
@@ -202,20 +187,28 @@ export default function OrgFlowSection({
             </>
           )}
         >
-          {decoratedCompanies.length === 0 ? <Hint>No companies yet.</Hint> : decoratedCompanies.map((c) => {
-            const active = isSameId(c.comp_id, selectedCompany?.comp_id);
-            const meta = [shortNameOf(c), `${positionCountByCompany.get(String(c.comp_id)) || 0} positions`].filter(Boolean).join(" · ");
-            return (
-              <button key={String(c.comp_id)} type="button" aria-pressed={active} disabled={isBusy}
-                className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectCompany(c)}>
-                <span className={styles.itemMain}>
-                  <span className={styles.itemName}>{c.comp_name}</span>
-                  <span className={styles.itemMeta}>{meta}</span>
-                </span>
-                <RowMarker row={c} />
-              </button>
-            );
-          })}
+          {decoratedCompanies.length === 0 ? <Hint>No companies yet.</Hint> : (
+            <>
+              <Input type="search" value={companySearch} onChange={(e) => setCompanySearch(e.target.value)}
+                placeholder="Search companies" aria-label="Search companies" className="mb-1" />
+              {visibleCompanies.length === 0 ? <Hint>No companies found.</Hint> : visibleCompanies.map((c) => {
+                const active = isSameId(c.comp_id, selectedCompany?.comp_id);
+                return (
+                  <button key={String(c.comp_id)} type="button" aria-pressed={active} disabled={isBusy}
+                    className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectCompany(c)}>
+                    <span className={styles.itemMain}>
+                      <span className={styles.itemName}>{c.comp_name}</span>
+                      {c.comp_code ? <span className={styles.itemMeta}>{c.comp_code}</span> : null}
+                    </span>
+                    <span className="d-flex align-items-center gap-1">
+                      <RowMarker row={c} />
+                      <span className={styles.count}>{positionCountByCompany.get(String(c.comp_id)) || 0}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </>
+          )}
         </Column>
 
         {/* 2 · Department */}
@@ -226,15 +219,13 @@ export default function OrgFlowSection({
             <>
               <LifecycleButtons
                 row={deptRow}
-                isPendingDeactivation={pendingDeactivatedDepartmentIds?.has(String(deptRow?.dept_id ?? ""))}
                 disabled={isBusy}
                 onEdit={openEditDepartmentDialog}
                 onRestore={openToggleDepartmentDialog}
                 onDeactivate={openDeactivateDepartmentDialog}
                 onDelete={(row) => askConfirm("Delete Department",
-                  `Permanently delete ${row?.dept_name || "this department"}? It is removed when you press Save Batch.`,
-                  "Delete Department", () => stageHardDeleteDepartment(row))}
-                onUndoDelete={unstageHardDeleteDepartment}
+                  `Permanently delete ${row?.dept_name || "this department"}? This cannot be undone. A department that still has positions cannot be deleted.`,
+                  "Delete Department", () => deleteDepartment(row))}
               />
               <Button type="button" size="sm" variant="success" className="w-100" disabled={isBusy} onClick={openAddDepartmentDialog}>
                 + Add Department
@@ -256,7 +247,10 @@ export default function OrgFlowSection({
                 return (
                   <button key={String(d.dept_id)} type="button" aria-pressed={active}
                     className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectDept(String(d.dept_id))}>
-                    <span className={styles.itemName}>{d.dept_name}</span>
+                    <span className={styles.itemMain}>
+                      <span className={styles.itemName}>{d.dept_name}</span>
+                      {d.dept_code ? <span className={styles.itemMeta}>{d.dept_code}</span> : null}
+                    </span>
                     <span className="d-flex align-items-center gap-1">
                       <RowMarker row={d} />
                       <span className={styles.count}>{positionCountByDept.get(String(d.dept_id)) || 0}</span>
@@ -278,8 +272,7 @@ export default function OrgFlowSection({
           ) : null}
         >
           {!selectedDeptKey ? <Hint>Pick a department, or Company-level for positions like Company Head.</Hint>
-            : !companySaved ? <Hint>Press Save Batch first, then add positions to this company.</Hint>
-            : !deptSaved ? <Hint>Press Save Batch first, then add positions to this department.</Hint>
+            : !deptSaved ? <Hint>Pick a department again.</Hint>
             : deptPositions.length === 0 ? <Hint>No positions here yet. Add the first one.</Hint>
               : deptPositionGroups.map((group) => (
                 <div key={group.level || "none"} className={styles.rankGroup}>
@@ -293,7 +286,10 @@ export default function OrgFlowSection({
                           className={`${styles.item} ${styles.positionCard} ${active ? styles.itemActive : ""}`}
                           onClick={() => onSelectPosition(p.position_id)}>
                           <span className={styles.cardTop}>
-                            <span className={styles.itemName}>{p.position_name}{p.branch ? ` (${p.branch})` : ""}</span>
+                            <span className={styles.itemName}>
+                              {p.position_name}{p.branch ? ` (${p.branch})` : ""}
+                              {p.position_code ? <span className="text-muted small fw-normal ms-1">{p.position_code}</span> : null}
+                            </span>
                             {!p.is_active ? <StatusBadge status="inactive" /> : null}
                           </span>
                           <span className={styles.itemMeta}>{reportsTo ? `Reports to ${reportsTo}` : "Top of the chart"}</span>
@@ -320,7 +316,7 @@ export default function OrgFlowSection({
                 <div>
                   <h2 className={styles.detailTitle}>{selectedPosition.position_name}</h2>
                   <div className={styles.itemMeta}>
-                    {[selectedCompany?.comp_name, deptLabel, selectedPosition.branch || "All branches", levelLabel(selectedPosition.chart_level)]
+                    {[selectedPosition.position_code, selectedCompany?.comp_name, deptLabel, selectedPosition.branch || "All branches", levelLabel(selectedPosition.chart_level)]
                       .filter(Boolean).join(" · ")}
                   </div>
                 </div>
@@ -341,6 +337,10 @@ export default function OrgFlowSection({
                       "Delete Position", () => onDeletePosition?.(selectedPosition))}>Delete</Button>
                 </div>
               </div>
+
+              {selectedSharedNote ? (
+                <div className="notice-banner notice-banner-warning" role="status">{selectedSharedNote}</div>
+              ) : null}
 
               <div>
                 <div className={styles.sectionLabel}>Reporting line</div>
@@ -386,26 +386,32 @@ export default function OrgFlowSection({
                     ))}
                   </div>
                 )}
-                <div className="small text-muted mt-2">Positions and people save right away. Companies and departments use Save Batch.</div>
+                <div className="small text-muted mt-2">All changes save right away.</div>
               </div>
             </div>
           )}
         </Column>
       </div>
 
-      <Modal show={Boolean(confirmBox)} onHide={() => setConfirmBox(null)} title={confirmBox?.title || ""}
-        footer={(
-          <>
-            <Button type="button" variant="ghost" onClick={() => setConfirmBox(null)}>Cancel</Button>
-            <Button type="button" variant="danger" onClick={() => {
-              const run = confirmBox?.onConfirm;
-              setConfirmBox(null);
-              if (typeof run === "function") run();
-            }}>{confirmBox?.label || "OK"}</Button>
-          </>
-        )}>
-        <p className="mb-0">{confirmBox?.message}</p>
-      </Modal>
+      {/* Mounted only while open, like the other dialogs on this page. A dialog
+          left mounted and hidden can leave its invisible layer over the page when
+          the confirmed change redraws the screen during its fade-out, which
+          blocks every click until a refresh. */}
+      {confirmBox ? (
+        <Modal show onHide={() => setConfirmBox(null)} title={confirmBox.title || ""}
+          footer={(
+            <>
+              <Button type="button" variant="ghost" onClick={() => setConfirmBox(null)}>Cancel</Button>
+              <Button type="button" variant="danger" onClick={() => {
+                const run = confirmBox.onConfirm;
+                setConfirmBox(null);
+                if (typeof run === "function") run();
+              }}>{confirmBox.label || "OK"}</Button>
+            </>
+          )}>
+          <p className="mb-0">{confirmBox.message}</p>
+        </Modal>
+      ) : null}
     </>
   );
 }

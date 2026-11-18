@@ -1,21 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button, Input, Modal, toastError, toastSuccess } from "@/shared/components/ui";
 import {
-  parseCompanyId, isSameId, compareText, normalizeText, mapCompanyRow, mapDepartmentRow,
-  removeObjectKey, mergeUpdatePatch, appendUniqueId,
-  EMPTY_DIALOG, TEMP_COMPANY_PREFIX, TEMP_DEPARTMENT_PREFIX,
-  createTempId, isTempCompanyId, isTempDepartmentId,
-  createEmptyCompanyChanges, createEmptyDepartmentChanges,
-  executeBatchSave, remapDepartmentsByCompanyId,
+  parseCompanyId, isSameId, compareText, normalizeText, mapCompanyRow, mapDepartmentRow, EMPTY_DIALOG,
 } from "../data/companyDepartmentSetup.data.js";
 import {
+  deleteCompanyAction,
+  deleteDepartmentAction,
   deleteOrgPositionAction,
   loadOrgPositionsData,
   moveOrgPositionAction,
+  saveCompanyAction,
+  saveDepartmentAction,
   saveOrgPositionAction,
+  setCompanyActiveAction,
+  setDepartmentActiveAction,
   setOrgPositionActiveAction,
 } from "../data/companyDepartmentSetup.actions.js";
 import PositionModal from "./PositionModal.jsx";
@@ -24,427 +25,214 @@ import OrgFlowSection, { COMPANY_LEVEL_KEY } from "./OrgFlowSection.jsx";
 import orgChartModule from "@/modules/admin/org-chart/index.js";
 
 const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "";
+const EMPTY_COMPANY_DRAFT = { name: "", shortName: "", email: "", phone: "" };
+const EMPTY_DEPARTMENT_DRAFT = { name: "", shortName: "" };
 
+// ═══════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════
+
+function sortCompanies(rows) {
+  return (Array.isArray(rows) ? rows : []).map((c, i) => mapCompanyRow(c, i)).sort((a, b) => compareText(a.comp_name, b.comp_name));
+}
+
+function sortDepartments(rows) {
+  return (Array.isArray(rows) ? rows : []).map((d, i) => mapDepartmentRow(d, i)).sort((a, b) => compareText(a.dept_name, b.dept_name));
+}
+
+// Empty fields show as "--" on the rows; the edit form starts empty for them.
+function fieldText(value) {
+  const text = String(value ?? "").trim();
+  return text === "--" ? "" : text;
+}
 // ═══════════════════════════════════════════════════════════
 //  HOOKS
 // ═══════════════════════════════════════════════════════════
 
 function useCompanyActions({
-  isSaving, isMutatingAction, selectedCompany, allDepartments, orderedCompanies,
-  dialog, companyDraft, pendingDeactivatedCompanyIds,
-  setOrderedCompanies, setAllDepartments, setCompanyChanges, setDepartmentChanges,
-  setDialog, setCompanyDraft, updateSelectedCompanyInQuery,
+  isBusy, runChange, dialog, companyDraft, companyRows, selectedCompanyId,
+  setCompanyRows, setDepartmentRows, setDialog, setCompanyDraft, updateSelectedCompanyInQuery,
 }) {
   const openAddCompanyDialog = useCallback(() => {
-    if (isMutatingAction || isSaving) return;
-    setCompanyDraft({ name: "", shortName: "", email: "", phone: "" });
+    if (isBusy) return;
+    setCompanyDraft(EMPTY_COMPANY_DRAFT);
     setDialog({ kind: "add-company", target: null, nextIsActive: true });
-  }, [isMutatingAction, isSaving, setCompanyDraft, setDialog]);
+  }, [isBusy, setCompanyDraft, setDialog]);
 
   const openEditCompanyDialog = useCallback((row) => {
-    if (isMutatingAction || isSaving) return;
+    if (isBusy) return;
     setCompanyDraft({
-      name: String(row?.comp_name || ""), shortName: String(row?.comp_short_name || ""),
-      email: String(row?.comp_email || ""), phone: String(row?.comp_phone || ""),
+      name: fieldText(row?.comp_name), shortName: fieldText(row?.comp_short_name),
+      email: fieldText(row?.comp_email), phone: fieldText(row?.comp_phone),
     });
     setDialog({ kind: "edit-company", target: row, nextIsActive: null });
-  }, [isMutatingAction, isSaving, setCompanyDraft, setDialog]);
+  }, [isBusy, setCompanyDraft, setDialog]);
 
   const openToggleCompanyDialog = useCallback((row) => {
-    if (isMutatingAction || isSaving) return;
-    const companyId = String(row?.comp_id ?? "");
-    if (pendingDeactivatedCompanyIds.has(companyId)) {
-      const linkedDeptIds = allDepartments.filter((d) => isSameId(d?.comp_id, companyId)).map((d) => String(d?.dept_id ?? ""));
-      setCompanyChanges((prev) => ({
-        ...prev,
-        deactivations: (prev.deactivations || []).filter((id) => !isSameId(id, companyId)),
-      }));
-      setDepartmentChanges((prev) => ({
-        ...prev,
-        deactivations: (prev.deactivations || []).filter((id) => !linkedDeptIds.some((lr) => isSameId(lr, id))),
-      }));
-      toastSuccess("Company deactivation un-staged.", "Batching");
-      return;
-    }
-    setDialog({ kind: "toggle-company", target: row, nextIsActive: !Boolean(row?.is_active_bool) });
-  }, [allDepartments, isMutatingAction, isSaving, pendingDeactivatedCompanyIds, setCompanyChanges, setDepartmentChanges, setDialog]);
+    if (isBusy) return;
+    setDialog({ kind: "toggle-company", target: row, nextIsActive: !row?.is_active_bool });
+  }, [isBusy, setDialog]);
 
   const openDeactivateCompanyDialog = useCallback((row) => {
-    if (isMutatingAction || isSaving) return;
+    if (isBusy) return;
     setDialog({ kind: "deactivate-company", target: row, nextIsActive: null });
-  }, [isMutatingAction, isSaving, setDialog]);
+  }, [isBusy, setDialog]);
 
-  const submitAddCompany = useCallback(() => {
+  // Add or Edit (same form).
+  const submitCompanyForm = useCallback(async () => {
+    const isEdit = dialog?.kind === "edit-company";
+    if (isEdit && dialog?.target?.comp_id == null) { toastError("Invalid company."); return; }
     const companyName = normalizeText(companyDraft.name);
     if (!companyName) { toastError("Company name is required."); return; }
-    const shortName = normalizeText(companyDraft.shortName);
-    const email = normalizeText(companyDraft.email);
-    const phone = normalizeText(companyDraft.phone);
-    const tempId = createTempId(TEMP_COMPANY_PREFIX);
 
-    setOrderedCompanies((prev) => [...prev, mapCompanyRow({
-      comp_id: tempId, comp_name: companyName, comp_short_name: shortName,
-      comp_email: email, comp_phone: phone, is_active: true,
-    }, prev.length)]);
+    const result = await runChange(() => saveCompanyAction({
+      comp_id: isEdit ? dialog.target.comp_id : null,
+      comp_name: companyName,
+      comp_short_name: normalizeText(companyDraft.shortName),
+      comp_email: normalizeText(companyDraft.email),
+      comp_phone: normalizeText(companyDraft.phone),
+    }), isEdit ? "Company saved." : "Company added.");
+    const saved = result?.company;
+    if (!saved) return;
 
-    setCompanyChanges((prev) => ({ ...prev, creates: [...prev.creates, {
-      tempId, payload: { comp_name: companyName, comp_short_name: shortName, comp_email: email, comp_phone: phone, is_active: true },
-    }]}));
+    setCompanyRows((prev) => sortCompanies(isEdit
+      ? prev.map((c) => (isSameId(c?.comp_id, saved.comp_id) ? saved : c))
+      : [...prev, saved]));
+    setCompanyDraft(EMPTY_COMPANY_DRAFT);
+    if (!isEdit) updateSelectedCompanyInQuery(saved.comp_id);
+  }, [companyDraft, dialog, runChange, setCompanyDraft, setCompanyRows, updateSelectedCompanyInQuery]);
 
-    updateSelectedCompanyInQuery(tempId);
-    setDialog(EMPTY_DIALOG); setCompanyDraft({ name: "", shortName: "", email: "", phone: "" });
-    toastSuccess("Company staged for Save Batch.", "Batching");
-  }, [companyDraft, setCompanyChanges, setCompanyDraft, setDialog, setOrderedCompanies, updateSelectedCompanyInQuery]);
-
-  const submitEditCompany = useCallback(() => {
+  // Restore (toggle-company) or Deactivate (deactivate-company).
+  const submitCompanyActive = useCallback(async () => {
     const row = dialog?.target;
-    if (!row?.comp_id) { toastError("Invalid company."); return; }
-    const companyName = normalizeText(companyDraft.name);
-    if (!companyName) { toastError("Company name is required."); return; }
-    const shortName = normalizeText(companyDraft.shortName);
-    const email = normalizeText(companyDraft.email);
-    const phone = normalizeText(companyDraft.phone);
-    const companyId = row.comp_id;
+    if (row?.comp_id == null) { toastError("Invalid company."); return; }
+    const isActive = dialog?.kind === "toggle-company" ? Boolean(dialog?.nextIsActive) : false;
 
-    setOrderedCompanies((prev) => prev.map((c, i) => isSameId(c?.comp_id, companyId)
-      ? mapCompanyRow({ ...c, comp_name: companyName, comp_short_name: shortName, comp_email: email, comp_phone: phone }, i) : c));
+    const result = await runChange(() => setCompanyActiveAction(row.comp_id, isActive),
+      isActive ? "Company restored." : "Company and its departments deactivated.", { seatsMayChange: true });
+    const saved = result?.company;
+    if (!saved) return;
 
-    setCompanyChanges((prev) => {
-      if (isTempCompanyId(companyId)) {
-        return { ...prev,
-          creates: prev.creates.map((e) => isSameId(e?.tempId, companyId)
-            ? { ...e, payload: { ...e.payload, comp_name: companyName, comp_short_name: shortName, comp_email: email, comp_phone: phone } } : e),
-          updates: removeObjectKey(prev.updates, companyId),
-        };
-      }
-      return { ...prev, updates: { ...prev.updates,
-        [String(companyId)]: mergeUpdatePatch(prev.updates?.[String(companyId)], { comp_name: companyName, comp_short_name: shortName, comp_email: email, comp_phone: phone }),
-      }};
-    });
-    setDialog(EMPTY_DIALOG);
-    toastSuccess("Company update staged for Save Batch.", "Batching");
-  }, [companyDraft, dialog, setCompanyChanges, setDialog, setOrderedCompanies]);
-
-  const submitToggleCompany = useCallback(() => {
-    const row = dialog?.target; const nextIsActive = Boolean(dialog?.nextIsActive);
-    if (!row?.comp_id) { toastError("Invalid company."); return; }
-    const companyId = row.comp_id;
-
-    setOrderedCompanies((prev) => prev.map((c, i) => isSameId(c?.comp_id, companyId)
-      ? mapCompanyRow({ ...c, is_active: nextIsActive }, i) : c));
-
-    setCompanyChanges((prev) => {
-      if (isTempCompanyId(companyId)) {
-        return { ...prev,
-          creates: prev.creates.map((e) => isSameId(e?.tempId, companyId) ? { ...e, payload: { ...e.payload, is_active: nextIsActive } } : e),
-          updates: removeObjectKey(prev.updates, companyId),
-        };
-      }
-      return { ...prev, updates: { ...prev.updates,
-        [String(companyId)]: mergeUpdatePatch(prev.updates?.[String(companyId)], { is_active: nextIsActive }),
-      }};
-    });
-    setDialog(EMPTY_DIALOG);
-    toastSuccess(`Company ${nextIsActive ? "enable" : "disable"} staged for Save Batch.`, "Batching");
-  }, [dialog, setCompanyChanges, setDialog, setOrderedCompanies]);
-
-  const submitDeactivateCompany = useCallback(() => {
-    const row = dialog?.target;
-    if (!row?.comp_id) { toastError("Invalid company."); return; }
-    const companyId = row.comp_id;
-    const linkedDeptIds = allDepartments.filter((d) => isSameId(d?.comp_id, companyId)).map((d) => String(d?.dept_id ?? ""));
-
-    if (isTempCompanyId(companyId)) {
-      const nextCompanies = orderedCompanies.filter((c) => !isSameId(c?.comp_id, companyId));
-      setOrderedCompanies(nextCompanies);
-      setAllDepartments((prev) => prev.filter((d) => !isSameId(d?.comp_id, companyId)));
-      setCompanyChanges((prev) => ({
-        ...prev,
-        creates: prev.creates.filter((e) => !isSameId(e?.tempId, companyId)),
-        updates: removeObjectKey(prev.updates, companyId),
-        deactivations: (prev.deactivations || []).filter((id) => !isSameId(id, companyId)),
-      }));
-      setDepartmentChanges((prev) => ({
-        creates: prev.creates.filter((e) => !isSameId(e?.payload?.comp_id, companyId)),
-        updates: linkedDeptIds.reduce((m, id) => removeObjectKey(m, id), prev.updates),
-        deactivations: (prev.deactivations || []).filter((id) => !linkedDeptIds.some((lr) => isSameId(lr, id))),
-      }));
-      if (isSameId(selectedCompany?.comp_id, companyId)) updateSelectedCompanyInQuery(nextCompanies[0]?.comp_id ?? null);
-      setDialog(EMPTY_DIALOG); toastSuccess("Company deactivation staged for Save Batch.", "Batching"); return;
+    setCompanyRows((prev) => sortCompanies(prev.map((c) => (isSameId(c?.comp_id, saved.comp_id) ? saved : c))));
+    if (!isActive) {
+      setDepartmentRows((prev) => prev.map((d, i) => (isSameId(d?.comp_id, saved.comp_id)
+        ? mapDepartmentRow({ ...d, is_active: false }, i) : d)));
     }
+  }, [dialog, runChange, setCompanyRows, setDepartmentRows]);
 
-    setCompanyChanges((prev) => ({
-      ...prev, updates: removeObjectKey(prev.updates, companyId),
-      deactivations: appendUniqueId(prev.deactivations, companyId),
-    }));
-    setDepartmentChanges((prev) => ({
-      creates: prev.creates.filter((e) => !isSameId(e?.payload?.comp_id, companyId)),
-      updates: linkedDeptIds.reduce((m, id) => removeObjectKey(m, id), prev.updates),
-      deactivations: linkedDeptIds.reduce((ids, id) => appendUniqueId(ids, id), prev.deactivations || []),
-    }));
-    setDialog(EMPTY_DIALOG); toastSuccess("Company deactivation staged for Save Batch.", "Batching");
-  }, [allDepartments, dialog, orderedCompanies, selectedCompany?.comp_id, setAllDepartments, setCompanyChanges, setDepartmentChanges, setDialog, setOrderedCompanies, updateSelectedCompanyInQuery]);
+  // Called after the Delete confirm in OrgFlowSection.
+  const deleteCompany = useCallback(async (row) => {
+    if (row?.comp_id == null) return false;
+    const result = await runChange(() => deleteCompanyAction(row.comp_id), "Company deleted.");
+    if (!result) return false;
 
-  const stageHardDeleteCompany = useCallback((row) => {
-    const companyId = String(row?.comp_id ?? "");
-    if (!companyId || isMutatingAction || isSaving) return;
-    const linkedDeptIds = allDepartments.filter((d) => isSameId(d?.comp_id, companyId)).map((d) => String(d?.dept_id ?? ""));
-
-    if (isTempCompanyId(companyId)) {
-      const nextCompanies = orderedCompanies.filter((c) => !isSameId(c?.comp_id, companyId));
-      setOrderedCompanies(nextCompanies);
-      setAllDepartments((prev) => prev.filter((d) => !isSameId(d?.comp_id, companyId)));
-      setCompanyChanges((prev) => ({
-        ...prev,
-        creates: prev.creates.filter((e) => !isSameId(e?.tempId, companyId)),
-        updates: removeObjectKey(prev.updates, companyId),
-      }));
-      setDepartmentChanges((prev) => ({
-        ...prev,
-        creates: prev.creates.filter((e) => !isSameId(e?.payload?.comp_id, companyId)),
-        updates: linkedDeptIds.reduce((m, id) => removeObjectKey(m, id), prev.updates),
-        deactivations: (prev.deactivations || []).filter((id) => !linkedDeptIds.some((lr) => isSameId(lr, id))),
-        hardDeletes: (prev.hardDeletes || []).filter((id) => !linkedDeptIds.some((lr) => isSameId(lr, id))),
-      }));
-      if (isSameId(selectedCompany?.comp_id, companyId)) updateSelectedCompanyInQuery(nextCompanies[0]?.comp_id ?? null);
-      toastSuccess("Staged company removed.", "Batching");
-      return;
-    }
-
-    setCompanyChanges((prev) => ({
-      ...prev,
-      updates: removeObjectKey(prev.updates, companyId),
-      deactivations: (prev.deactivations || []).filter((id) => !isSameId(id, companyId)),
-      hardDeletes: appendUniqueId(prev.hardDeletes || [], companyId),
-    }));
-    setDepartmentChanges((prev) => ({
-      ...prev,
-      creates: prev.creates.filter((e) => !isSameId(e?.payload?.comp_id, companyId)),
-      updates: linkedDeptIds.reduce((m, id) => removeObjectKey(m, id), prev.updates),
-      deactivations: (prev.deactivations || []).filter((id) => !linkedDeptIds.some((lr) => isSameId(lr, id))),
-      hardDeletes: linkedDeptIds.reduce(
-        (ids, id) => isTempDepartmentId(id) ? ids : appendUniqueId(ids, id),
-        (prev.hardDeletes || []).filter((id) => !linkedDeptIds.some((lr) => isSameId(lr, id))),
-      ),
-    }));
-    toastSuccess("Company deletion staged for Save Batch.", "Batching");
-  }, [allDepartments, isMutatingAction, isSaving, orderedCompanies, selectedCompany?.comp_id, setAllDepartments, setCompanyChanges, setDepartmentChanges, setOrderedCompanies, updateSelectedCompanyInQuery]);
-
-  const unstageHardDeleteCompany = useCallback((row) => {
-    const companyId = String(row?.comp_id ?? "");
-    if (!companyId || isMutatingAction || isSaving) return;
-    const linkedDeptIds = allDepartments.filter((d) => isSameId(d?.comp_id, companyId)).map((d) => String(d?.dept_id ?? ""));
-    setCompanyChanges((prev) => ({
-      ...prev,
-      hardDeletes: (prev.hardDeletes || []).filter((id) => !isSameId(id, companyId)),
-    }));
-    setDepartmentChanges((prev) => ({
-      ...prev,
-      hardDeletes: (prev.hardDeletes || []).filter((id) => !linkedDeptIds.some((lr) => isSameId(lr, id))),
-    }));
-    toastSuccess("Company deletion un-staged.", "Batching");
-  }, [allDepartments, isMutatingAction, isSaving, setCompanyChanges, setDepartmentChanges]);
+    const remaining = companyRows.filter((c) => !isSameId(c?.comp_id, row.comp_id));
+    setCompanyRows(remaining);
+    setDepartmentRows((prev) => prev.filter((d) => !isSameId(d?.comp_id, row.comp_id)));
+    if (isSameId(selectedCompanyId, row.comp_id)) updateSelectedCompanyInQuery(remaining[0]?.comp_id ?? null);
+    return true;
+  }, [companyRows, runChange, selectedCompanyId, setCompanyRows, setDepartmentRows, updateSelectedCompanyInQuery]);
 
   return {
     openAddCompanyDialog, openEditCompanyDialog, openToggleCompanyDialog, openDeactivateCompanyDialog,
-    submitAddCompany, submitEditCompany, submitToggleCompany, submitDeactivateCompany, stageHardDeleteCompany, unstageHardDeleteCompany,
+    submitCompanyForm, submitCompanyActive, deleteCompany,
   };
 }
-
 function useDepartmentActions({
-  isSaving, isMutatingAction, isSelectedCompanyPendingDeactivation,
-  selectedCompany, dialog, departmentDraft, pendingDeactivatedDepartmentIds,
-  setAllDepartments, setDepartmentChanges, setDialog, setDepartmentDraft,
+  isBusy, runChange, dialog, departmentDraft, selectedCompany,
+  setDepartmentRows, setDialog, setDepartmentDraft,
 }) {
   const openAddDepartmentDialog = useCallback(() => {
-    if (isMutatingAction || isSaving) return;
+    if (isBusy) return;
     if (!selectedCompany?.comp_id) { toastError("Select a company before adding a department."); return; }
-    if (isSelectedCompanyPendingDeactivation) { toastError("Selected company is staged for deactivation. Save or cancel company batch first."); return; }
-    setDepartmentDraft({ name: "", shortName: "" });
+    setDepartmentDraft(EMPTY_DEPARTMENT_DRAFT);
     setDialog({ kind: "add-department", target: { comp_id: selectedCompany.comp_id, comp_name: selectedCompany.comp_name }, nextIsActive: true });
-  }, [isMutatingAction, isSaving, isSelectedCompanyPendingDeactivation, selectedCompany, setDepartmentDraft, setDialog]);
+  }, [isBusy, selectedCompany, setDepartmentDraft, setDialog]);
 
   const openEditDepartmentDialog = useCallback((row) => {
-    if (isMutatingAction || isSaving) return;
-    setDepartmentDraft({ name: String(row?.dept_name || ""), shortName: String(row?.dept_short_name || "") });
+    if (isBusy) return;
+    setDepartmentDraft({ name: fieldText(row?.dept_name), shortName: fieldText(row?.dept_short_name) });
     setDialog({ kind: "edit-department", target: row, nextIsActive: null });
-  }, [isMutatingAction, isSaving, setDepartmentDraft, setDialog]);
+  }, [isBusy, setDepartmentDraft, setDialog]);
 
   const openToggleDepartmentDialog = useCallback((row) => {
-    if (isMutatingAction || isSaving) return;
-    const deptId = String(row?.dept_id ?? "");
-    if (pendingDeactivatedDepartmentIds.has(deptId)) {
-      setDepartmentChanges((prev) => ({
-        ...prev,
-        deactivations: (prev.deactivations || []).filter((id) => !isSameId(id, deptId)),
-      }));
-      toastSuccess("Department deactivation un-staged.", "Batching");
-      return;
-    }
-    setDialog({ kind: "toggle-department", target: row, nextIsActive: !Boolean(row?.is_active_bool) });
-  }, [isMutatingAction, isSaving, pendingDeactivatedDepartmentIds, setDepartmentChanges, setDialog]);
+    if (isBusy) return;
+    setDialog({ kind: "toggle-department", target: row, nextIsActive: !row?.is_active_bool });
+  }, [isBusy, setDialog]);
 
   const openDeactivateDepartmentDialog = useCallback((row) => {
-    if (isMutatingAction || isSaving) return;
+    if (isBusy) return;
     setDialog({ kind: "deactivate-department", target: row, nextIsActive: null });
-  }, [isMutatingAction, isSaving, setDialog]);
+  }, [isBusy, setDialog]);
 
-  const submitAddDepartment = useCallback(() => {
+  // Add or Edit (same form).
+  const submitDepartmentForm = useCallback(async () => {
+    const isEdit = dialog?.kind === "edit-department";
     const target = dialog?.target;
-    if (!target?.comp_id) { toastError("Select a company before adding a department."); return; }
+    if (isEdit && target?.dept_id == null) { toastError("Invalid department."); return; }
+    if (!isEdit && target?.comp_id == null) { toastError("Select a company before adding a department."); return; }
     const deptName = normalizeText(departmentDraft.name);
     if (!deptName) { toastError("Department name is required."); return; }
-    const shortName = normalizeText(departmentDraft.shortName);
-    const tempId = createTempId(TEMP_DEPARTMENT_PREFIX);
 
-    setAllDepartments((prev) => [...prev, mapDepartmentRow({
-      dept_id: tempId, comp_id: target.comp_id, dept_name: deptName, dept_short_name: shortName, is_active: true,
-    }, prev.length)]);
+    const result = await runChange(() => saveDepartmentAction({
+      dept_id: isEdit ? target.dept_id : null,
+      comp_id: target.comp_id,
+      dept_name: deptName,
+      dept_short_name: normalizeText(departmentDraft.shortName),
+    }), isEdit ? "Department saved." : "Department added.");
+    const saved = result?.department;
+    if (!saved) return;
 
-    setDepartmentChanges((prev) => ({ ...prev, creates: [...prev.creates, {
-      tempId, payload: { comp_id: target.comp_id, dept_name: deptName, dept_short_name: shortName, is_active: true },
-    }]}));
-    setDialog(EMPTY_DIALOG); setDepartmentDraft({ name: "", shortName: "" });
-    toastSuccess("Department staged for Save Batch.", "Batching");
-  }, [departmentDraft, dialog, setAllDepartments, setDepartmentChanges, setDepartmentDraft, setDialog]);
+    setDepartmentRows((prev) => sortDepartments(isEdit
+      ? prev.map((d) => (isSameId(d?.dept_id, saved.dept_id) ? saved : d))
+      : [...prev, saved]));
+    setDepartmentDraft(EMPTY_DEPARTMENT_DRAFT);
+  }, [departmentDraft, dialog, runChange, setDepartmentDraft, setDepartmentRows]);
 
-  const submitEditDepartment = useCallback(() => {
+  // Restore (toggle-department) or Deactivate (deactivate-department).
+  const submitDepartmentActive = useCallback(async () => {
     const row = dialog?.target;
-    if (!row?.dept_id) { toastError("Invalid department."); return; }
-    const deptName = normalizeText(departmentDraft.name);
-    if (!deptName) { toastError("Department name is required."); return; }
-    const shortName = normalizeText(departmentDraft.shortName);
-    const deptId = row.dept_id;
+    if (row?.dept_id == null) { toastError("Invalid department."); return; }
+    const isActive = dialog?.kind === "toggle-department" ? Boolean(dialog?.nextIsActive) : false;
 
-    setAllDepartments((prev) => prev.map((d, i) => isSameId(d?.dept_id, deptId)
-      ? mapDepartmentRow({ ...d, dept_name: deptName, dept_short_name: shortName }, i) : d));
+    const result = await runChange(() => setDepartmentActiveAction(row.dept_id, isActive),
+      isActive ? "Department restored." : "Department deactivated.", { seatsMayChange: true });
+    const saved = result?.department;
+    if (!saved) return;
 
-    setDepartmentChanges((prev) => {
-      if (isTempDepartmentId(deptId)) {
-        return { ...prev,
-          creates: prev.creates.map((e) => isSameId(e?.tempId, deptId)
-            ? { ...e, payload: { ...e.payload, dept_name: deptName, dept_short_name: shortName } } : e),
-          updates: removeObjectKey(prev.updates, deptId),
-        };
-      }
-      return { ...prev, updates: { ...prev.updates,
-        [String(deptId)]: mergeUpdatePatch(prev.updates?.[String(deptId)], { dept_name: deptName, dept_short_name: shortName }),
-      }};
-    });
-    setDialog(EMPTY_DIALOG);
-    toastSuccess("Department update staged for Save Batch.", "Batching");
-  }, [departmentDraft, dialog, setAllDepartments, setDepartmentChanges, setDialog]);
+    setDepartmentRows((prev) => sortDepartments(prev.map((d) => (isSameId(d?.dept_id, saved.dept_id) ? saved : d))));
+  }, [dialog, runChange, setDepartmentRows]);
 
-  const submitToggleDepartment = useCallback(() => {
-    const row = dialog?.target; const nextIsActive = Boolean(dialog?.nextIsActive);
-    if (!row?.dept_id) { toastError("Invalid department."); return; }
-    const deptId = row.dept_id;
-
-    setAllDepartments((prev) => prev.map((d, i) => isSameId(d?.dept_id, deptId)
-      ? mapDepartmentRow({ ...d, is_active: nextIsActive }, i) : d));
-
-    setDepartmentChanges((prev) => {
-      if (isTempDepartmentId(deptId)) {
-        return { ...prev,
-          creates: prev.creates.map((e) => isSameId(e?.tempId, deptId) ? { ...e, payload: { ...e.payload, is_active: nextIsActive } } : e),
-          updates: removeObjectKey(prev.updates, deptId),
-        };
-      }
-      return { ...prev, updates: { ...prev.updates,
-        [String(deptId)]: mergeUpdatePatch(prev.updates?.[String(deptId)], { is_active: nextIsActive }),
-      }};
-    });
-    setDialog(EMPTY_DIALOG);
-    toastSuccess(`Department ${nextIsActive ? "enable" : "disable"} staged for Save Batch.`, "Batching");
-  }, [dialog, setAllDepartments, setDepartmentChanges, setDialog]);
-
-  const submitDeactivateDepartment = useCallback(() => {
-    const row = dialog?.target;
-    if (!row?.dept_id) { toastError("Invalid department."); return; }
-    const deptId = row.dept_id;
-
-    if (isTempDepartmentId(deptId)) {
-      setAllDepartments((prev) => prev.filter((d) => !isSameId(d?.dept_id, deptId)));
-    }
-
-    setDepartmentChanges((prev) => {
-      if (isTempDepartmentId(deptId)) {
-        return { ...prev,
-          creates: prev.creates.filter((e) => !isSameId(e?.tempId, deptId)),
-          updates: removeObjectKey(prev.updates, deptId),
-          deactivations: (prev.deactivations || []).filter((id) => !isSameId(id, deptId)),
-        };
-      }
-      return { ...prev, updates: removeObjectKey(prev.updates, deptId), deactivations: appendUniqueId(prev.deactivations, deptId) };
-    });
-    setDialog(EMPTY_DIALOG);
-    toastSuccess("Department deactivation staged for Save Batch.", "Batching");
-  }, [dialog, setAllDepartments, setDepartmentChanges, setDialog]);
-
-  const stageHardDeleteDepartment = useCallback((row) => {
-    const deptId = String(row?.dept_id ?? "");
-    if (!deptId || isMutatingAction || isSaving) return;
-
-    if (isTempDepartmentId(deptId)) {
-      setAllDepartments((prev) => prev.filter((d) => !isSameId(d?.dept_id, deptId)));
-      setDepartmentChanges((prev) => ({
-        ...prev,
-        creates: prev.creates.filter((e) => !isSameId(e?.tempId, deptId)),
-        updates: removeObjectKey(prev.updates, deptId),
-      }));
-      toastSuccess("Staged department removed.", "Batching");
-      return;
-    }
-
-    setDepartmentChanges((prev) => ({
-      ...prev,
-      deactivations: (prev.deactivations || []).filter((id) => !isSameId(id, deptId)),
-      updates: removeObjectKey(prev.updates, deptId),
-      hardDeletes: appendUniqueId(prev.hardDeletes || [], deptId),
-    }));
-    toastSuccess("Department deletion staged for Save Batch.", "Batching");
-  }, [isMutatingAction, isSaving, setAllDepartments, setDepartmentChanges]);
-
-  const unstageHardDeleteDepartment = useCallback((row) => {
-    const deptId = String(row?.dept_id ?? "");
-    if (!deptId || isMutatingAction || isSaving) return;
-    setDepartmentChanges((prev) => ({
-      ...prev,
-      hardDeletes: (prev.hardDeletes || []).filter((id) => !isSameId(id, deptId)),
-    }));
-    toastSuccess("Department deletion un-staged.", "Batching");
-  }, [isMutatingAction, isSaving, setDepartmentChanges]);
+  // Called after the Delete confirm in OrgFlowSection. Returns true when deleted.
+  const deleteDepartment = useCallback(async (row) => {
+    if (row?.dept_id == null) return false;
+    const result = await runChange(() => deleteDepartmentAction(row.dept_id), "Department deleted.");
+    if (!result) return false;
+    setDepartmentRows((prev) => prev.filter((d) => !isSameId(d?.dept_id, row.dept_id)));
+    return true;
+  }, [runChange, setDepartmentRows]);
 
   return {
     openAddDepartmentDialog, openEditDepartmentDialog, openToggleDepartmentDialog, openDeactivateDepartmentDialog,
-    submitAddDepartment, submitEditDepartment, submitToggleDepartment, submitDeactivateDepartment, stageHardDeleteDepartment, unstageHardDeleteDepartment,
+    submitDepartmentForm, submitDepartmentActive, deleteDepartment,
   };
 }
-
-function useCompanyDepartmentSetup({ companies = [], departments = [], initialSelectedCompanyId = null }) {
+function useCompanyDepartmentSetup({ companies = [], departments = [], initialSelectedCompanyId = null, onSeatsChanged }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const seedCompanies = useMemo(
-    () => (Array.isArray(companies) ? companies : []).map((c, i) => mapCompanyRow(c, i)).sort((a, b) => compareText(a.comp_name, b.comp_name)),
-    [companies]);
+  const seedCompanies = useMemo(() => sortCompanies(companies), [companies]);
+  const seedDepartments = useMemo(() => sortDepartments(departments), [departments]);
 
-  const seedDepartments = useMemo(
-    () => (Array.isArray(departments) ? departments : []).map((d, i) => mapDepartmentRow(d, i)).sort((a, b) => compareText(a.dept_name, b.dept_name)),
-    [departments]);
-
-  const [orderedCompanies, setOrderedCompanies] = useState(seedCompanies);
-  const [allDepartments, setAllDepartments] = useState(seedDepartments);
-  const [companyChanges, setCompanyChanges] = useState(createEmptyCompanyChanges());
-  const [departmentChanges, setDepartmentChanges] = useState(createEmptyDepartmentChanges());
-  const [isMutatingAction, setIsMutatingAction] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  // Local copies so a saved change shows at once; router.refresh() then reloads
+  // the page data, which replaces them.
+  const [companyRows, setCompanyRows] = useState(seedCompanies);
+  const [departmentRows, setDepartmentRows] = useState(seedDepartments);
+  const [isBusy, setIsBusy] = useState(false);
   const [dialog, setDialog] = useState(EMPTY_DIALOG);
-  const [companyDraft, setCompanyDraft] = useState({ name: "", shortName: "", email: "", phone: "" });
-  const [departmentDraft, setDepartmentDraft] = useState({ name: "", shortName: "" });
-  const [expandedCompanyId, setExpandedCompanyId] = useState(null);
-  const batchActiveRef = useRef(false);
+  const [companyDraft, setCompanyDraft] = useState(EMPTY_COMPANY_DRAFT);
+  const [departmentDraft, setDepartmentDraft] = useState(EMPTY_DEPARTMENT_DRAFT);
 
   const [selectedCompanyId, setSelectedCompanyId] = useState(() => {
     const fromQ = parseCompanyId(searchParams?.get("company"));
@@ -453,97 +241,20 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
     return seedCompanies[0]?.comp_id ?? null;
   });
 
+  useEffect(() => { setCompanyRows(seedCompanies); }, [seedCompanies]);
+  useEffect(() => { setDepartmentRows(seedDepartments); }, [seedDepartments]);
   useEffect(() => {
-    if (batchActiveRef.current) return;
-    setOrderedCompanies(seedCompanies); setAllDepartments(seedDepartments);
-    setCompanyChanges(createEmptyCompanyChanges()); setDepartmentChanges(createEmptyDepartmentChanges());
-    setDialog(EMPTY_DIALOG); setCompanyDraft({ name: "", shortName: "", email: "", phone: "" }); setDepartmentDraft({ name: "", shortName: "" });
-    setIsMutatingAction(false); setIsSaving(false);
     const qId = parseCompanyId(searchParams?.get("company"));
     setSelectedCompanyId(qId ?? initialSelectedCompanyId ?? seedCompanies[0]?.comp_id ?? null);
-  }, [initialSelectedCompanyId, searchParams, seedCompanies, seedDepartments]);
-
-  const pendingSummary = useMemo(() => {
-    const cA = companyChanges.creates.length;
-    const cE = Object.entries(companyChanges.updates || {}).filter(([id, patch]) => {
-      const seed = seedCompanies.find((c) => isSameId(c?.comp_id, id));
-      if (!seed) return true;
-      return Object.entries(patch || {}).some(([k, v]) => String(v ?? "") !== String(seed[k] ?? ""));
-    }).length;
-    const cD = companyChanges.deactivations.length;
-    const cH = (companyChanges.hardDeletes || []).length;
-    const dA = departmentChanges.creates.length;
-    const dE = Object.entries(departmentChanges.updates || {}).filter(([id, patch]) => {
-      const seed = seedDepartments.find((d) => isSameId(d?.dept_id, id));
-      if (!seed) return true;
-      return Object.entries(patch || {}).some(([k, v]) => String(v ?? "") !== String(seed[k] ?? ""));
-    }).length;
-    const dD = departmentChanges.deactivations.length;
-    const dH = (departmentChanges.hardDeletes || []).length;
-    return { companyAdded: cA, companyEdited: cE, companyDeactivated: cD, companyHardDeleted: cH, departmentAdded: dA, departmentEdited: dE, departmentDeactivated: dD, departmentHardDeleted: dH, total: cA + cE + cD + cH + dA + dE + dD + dH };
-  }, [companyChanges, departmentChanges, seedCompanies, seedDepartments]);
-
-  const hasPendingChanges = pendingSummary.total > 0;
-
-  useEffect(() => { batchActiveRef.current = hasPendingChanges; }, [hasPendingChanges]);
-
-  const pendingDeactivatedCompanyIds = useMemo(
-    () => new Set((companyChanges.deactivations || []).map((id) => String(id ?? ""))), [companyChanges.deactivations]);
-  const pendingDeactivatedDepartmentIds = useMemo(
-    () => new Set((departmentChanges.deactivations || []).map((id) => String(id ?? ""))), [departmentChanges.deactivations]);
-  const pendingHardDeletedCompanyIds = useMemo(
-    () => new Set((companyChanges.hardDeletes || []).map((id) => String(id ?? ""))), [companyChanges.hardDeletes]);
-  const pendingHardDeletedDepartmentIds = useMemo(
-    () => new Set((departmentChanges.hardDeletes || []).map((id) => String(id ?? ""))), [departmentChanges.hardDeletes]);
+  }, [initialSelectedCompanyId, searchParams, seedCompanies]);
 
   const selectedCompany = useMemo(
-    () => orderedCompanies.find((c) => isSameId(c?.comp_id, selectedCompanyId)) ?? null, [orderedCompanies, selectedCompanyId]);
+    () => companyRows.find((c) => isSameId(c?.comp_id, selectedCompanyId)) ?? null, [companyRows, selectedCompanyId]);
 
   const selectedCompanyDepartments = useMemo(() => {
     if (!selectedCompany?.comp_id) return [];
-    return allDepartments.filter((d) => isSameId(d?.comp_id, selectedCompany.comp_id)).sort((a, b) => compareText(a.dept_name, b.dept_name));
-  }, [allDepartments, selectedCompany?.comp_id]);
-
-  const isSelectedCompanyPendingDeactivation = useMemo(
-    () => pendingDeactivatedCompanyIds.has(String(selectedCompany?.comp_id ?? "")), [pendingDeactivatedCompanyIds, selectedCompany?.comp_id]);
-
-  const decoratedCompanies = useMemo(() => {
-    const cIds = new Set((companyChanges.creates || []).map((e) => String(e?.tempId ?? "")));
-    const uIds = new Set(Object.entries(companyChanges.updates || {}).filter(([id, patch]) => {
-      const seed = seedCompanies.find((c) => isSameId(c?.comp_id, id));
-      if (!seed) return true;
-      return Object.entries(patch || {}).some(([k, v]) => String(v ?? "") !== String(seed[k] ?? ""));
-    }).map(([id]) => id));
-    const dIds = new Set((companyChanges.deactivations || []).map((e) => String(e ?? "")));
-    const hIds = new Set((companyChanges.hardDeletes || []).map((e) => String(e ?? "")));
-    return orderedCompanies.map((row) => {
-      const id = String(row?.comp_id ?? "");
-      if (hIds.has(id)) return { ...row, __batchState: "hardDeleted" };
-      if (dIds.has(id)) return { ...row, __batchState: "deleted" };
-      if (cIds.has(id)) return { ...row, __batchState: "created" };
-      if (uIds.has(id)) return { ...row, __batchState: "updated" };
-      return { ...row, __batchState: "none" };
-    });
-  }, [companyChanges, orderedCompanies, seedCompanies]);
-
-  const decoratedDepartments = useMemo(() => {
-    const cIds = new Set((departmentChanges.creates || []).map((e) => String(e?.tempId ?? "")));
-    const uIds = new Set(Object.entries(departmentChanges.updates || {}).filter(([id, patch]) => {
-      const seed = seedDepartments.find((d) => isSameId(d?.dept_id, id));
-      if (!seed) return true;
-      return Object.entries(patch || {}).some(([k, v]) => String(v ?? "") !== String(seed[k] ?? ""));
-    }).map(([id]) => id));
-    const dIds = new Set((departmentChanges.deactivations || []).map((e) => String(e ?? "")));
-    const hIds = new Set((departmentChanges.hardDeletes || []).map((e) => String(e ?? "")));
-    return selectedCompanyDepartments.map((row) => {
-      const id = String(row?.dept_id ?? "");
-      if (hIds.has(id)) return { ...row, __batchState: "hardDeleted" };
-      if (dIds.has(id)) return { ...row, __batchState: "deleted" };
-      if (cIds.has(id)) return { ...row, __batchState: "created" };
-      if (uIds.has(id)) return { ...row, __batchState: "updated" };
-      return { ...row, __batchState: "none" };
-    });
-  }, [departmentChanges, seedDepartments, selectedCompanyDepartments]);
+    return departmentRows.filter((d) => isSameId(d?.comp_id, selectedCompany.comp_id)).sort((a, b) => compareText(a.dept_name, b.dept_name));
+  }, [departmentRows, selectedCompany?.comp_id]);
 
   const updateSelectedCompanyInQuery = useCallback((companyId) => {
     const p = new URLSearchParams(searchParams?.toString() || "");
@@ -553,121 +264,80 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
     setSelectedCompanyId(companyId ?? null);
   }, [pathname, router, searchParams]);
 
-  const closeDialog = useCallback(() => { if (!isMutatingAction && !isSaving) setDialog(EMPTY_DIALOG); }, [isMutatingAction, isSaving]);
+  const closeDialog = useCallback(() => { if (!isBusy) setDialog(EMPTY_DIALOG); }, [isBusy]);
 
   const handleCompanyRowClick = useCallback((row) => {
-    if (isMutatingAction || isSaving) return;
-    const compId = row?.comp_id;
-    setExpandedCompanyId((prev) => isSameId(prev, compId) ? null : compId);
-    updateSelectedCompanyInQuery(compId);
-  }, [isMutatingAction, isSaving, updateSelectedCompanyInQuery]);
+    if (isBusy) return;
+    updateSelectedCompanyInQuery(row?.comp_id);
+  }, [isBusy, updateSelectedCompanyInQuery]);
 
-  const handleCancelBatch = useCallback(() => {
-    if (isMutatingAction || isSaving || !hasPendingChanges) return;
-    batchActiveRef.current = false;
-    setOrderedCompanies(seedCompanies); setAllDepartments(seedDepartments);
-    setCompanyChanges(createEmptyCompanyChanges()); setDepartmentChanges(createEmptyDepartmentChanges());
-    setDialog(EMPTY_DIALOG); setCompanyDraft({ name: "", shortName: "", email: "", phone: "" }); setDepartmentDraft({ name: "", shortName: "" });
-    updateSelectedCompanyInQuery(seedCompanies[0]?.comp_id ?? null);
-    toastSuccess("Batch changes canceled.", "Batching");
-  }, [hasPendingChanges, isMutatingAction, isSaving, seedCompanies, seedDepartments, updateSelectedCompanyInQuery]);
-
-  const handleSaveBatch = useCallback(async () => {
-    if (!hasPendingChanges || isSaving || isMutatingAction) return;
-    setIsSaving(true); setIsMutatingAction(true);
+  // Saves one change straight away. Returns the action result, or null when it
+  // failed (an error toast is shown and the dialog stays open).
+  const runChange = useCallback(async (work, message, { seatsMayChange = false } = {}) => {
+    if (isBusy) return null;
+    setIsBusy(true);
     try {
-      const { companyIdMap, nextSelectedCompanyId } = await executeBatchSave(
-        companyChanges, departmentChanges, orderedCompanies, selectedCompany?.comp_id);
-      if (companyIdMap.size > 0) setAllDepartments((prev) => remapDepartmentsByCompanyId(prev, companyIdMap));
-      setCompanyChanges(createEmptyCompanyChanges()); setDepartmentChanges(createEmptyDepartmentChanges());
-      batchActiveRef.current = false;
-      updateSelectedCompanyInQuery(nextSelectedCompanyId);
+      const result = await work();
+      if (!result || result.success === false) throw new Error(result?.error || "Failed to save the change.");
+      setDialog(EMPTY_DIALOG);
+      toastSuccess(message, "Organization");
       router.refresh();
-      toastSuccess(`Saved ${pendingSummary.total} batched change(s).`, "Save Batch");
+      if (seatsMayChange && typeof onSeatsChanged === "function") {
+        // People's main seats may have moved; reload the positions so the screen shows it.
+        try { await onSeatsChanged(); } catch {
+          toastError("Saved, but the positions list could not be reloaded. Refresh the page.");
+        }
+      }
+      return result;
     } catch (error) {
-      toastError(error?.message || "Failed to save batched changes.");
-    } finally { setIsMutatingAction(false); setIsSaving(false); }
-  }, [companyChanges, departmentChanges, hasPendingChanges, isMutatingAction, isSaving,
-    orderedCompanies, pendingSummary.total, router, selectedCompany?.comp_id, updateSelectedCompanyInQuery]);
+      toastError(error?.message || "Failed to save the change.");
+      return null;
+    } finally {
+      setIsBusy(false);
+    }
+  }, [isBusy, onSeatsChanged, router]);
 
   const companyActions = useCompanyActions({
-    isSaving, isMutatingAction, selectedCompany, allDepartments, orderedCompanies,
-    dialog, companyDraft, pendingDeactivatedCompanyIds,
-    setOrderedCompanies, setAllDepartments, setCompanyChanges, setDepartmentChanges,
-    setDialog, setCompanyDraft, updateSelectedCompanyInQuery,
+    isBusy, runChange, dialog, companyDraft, companyRows, selectedCompanyId,
+    setCompanyRows, setDepartmentRows, setDialog, setCompanyDraft, updateSelectedCompanyInQuery,
   });
 
   const deptActions = useDepartmentActions({
-    isSaving, isMutatingAction, isSelectedCompanyPendingDeactivation,
-    selectedCompany, dialog, departmentDraft, pendingDeactivatedDepartmentIds,
-    setAllDepartments, setDepartmentChanges, setDialog, setDepartmentDraft,
+    isBusy, runChange, dialog, departmentDraft, selectedCompany,
+    setDepartmentRows, setDialog, setDepartmentDraft,
   });
 
   return {
-    decoratedCompanies, decoratedDepartments,
-    dialog, companyDraft, departmentDraft, isSaving, isMutatingAction,
-    pendingSummary, hasPendingChanges,
-    pendingDeactivatedCompanyIds, pendingDeactivatedDepartmentIds,
-    pendingHardDeletedCompanyIds, pendingHardDeletedDepartmentIds,
-    selectedCompany, isSelectedCompanyPendingDeactivation, expandedCompanyId,
-    setDialog, setCompanyDraft, setDepartmentDraft,
-    handleCompanyRowClick, handleCancelBatch, handleSaveBatch, closeDialog,
+    companies: companyRows, departments: selectedCompanyDepartments, selectedCompany,
+    dialog, companyDraft, departmentDraft, isBusy,
+    setCompanyDraft, setDepartmentDraft, closeDialog, handleCompanyRowClick,
     ...companyActions, ...deptActions,
   };
 }
-
 // ═══════════════════════════════════════════════════════════
 //  LOCAL COMPONENTS
 // ═══════════════════════════════════════════════════════════
 
 
-function CompanyDeptHeader({
-  hasPendingChanges, pendingSummary, isSaving, isMutatingAction,
-  handleSaveBatch, handleCancelBatch,
-  openAddCompanyDialog, onOpenRanks,
-}) {
+function CompanyDeptHeader({ isBusy, onOpenRanks }) {
   return (
     <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
       <div>
         <h1 className="h3 mb-1">Organization Setup</h1>
-        <p className="text-muted mb-0">Pick a company, then a department, then a position. The org chart is drawn from what you set here.</p>
+        <p className="text-muted mb-0">Pick a company, then a department, then a position. Changes save right away, and the org chart is drawn from what you set here.</p>
       </div>
       <div className="d-flex flex-wrap align-items-center justify-content-end gap-2">
-        <span className={`small ${hasPendingChanges ? "text-warning-emphasis fw-semibold" : "text-muted"}`}>
-          {isMutatingAction || isSaving
-            ? "Saving batch..."
-            : hasPendingChanges ? `${pendingSummary.total} staged change(s)` : "No changes"}
-        </span>
-        {hasPendingChanges ? (
-          <>
-            {pendingSummary.companyAdded + pendingSummary.departmentAdded > 0 ? (
-              <span className="psb-batch-chip psb-batch-chip-added">+{pendingSummary.companyAdded + pendingSummary.departmentAdded} Added</span>
-            ) : null}
-            {pendingSummary.companyEdited + pendingSummary.departmentEdited > 0 ? (
-              <span className="psb-batch-chip psb-batch-chip-edited">~{pendingSummary.companyEdited + pendingSummary.departmentEdited} Edited</span>
-            ) : null}
-            {pendingSummary.companyDeactivated + pendingSummary.departmentDeactivated > 0 ? (
-              <span className="psb-batch-chip psb-batch-chip-deleted">-{pendingSummary.companyDeactivated + pendingSummary.departmentDeactivated} Deactivated</span>
-            ) : null}
-          </>
-        ) : null}
-        <Button type="button" size="sm" variant="primary" loading={isSaving}
-          disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleSaveBatch}>Save Batch</Button>
-        <Button type="button" size="sm" variant="ghost"
-          disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleCancelBatch}>Cancel Batch</Button>
+        {isBusy ? <span className="small text-muted">Saving...</span> : null}
         <Button type="button" size="sm" variant="secondary" onClick={onOpenRanks}>Ranks</Button>
         <a href={ORG_CHART_PATH} className="btn btn-sm btn-outline-primary">Org Chart</a>
       </div>
     </div>
   );
 }
-
-
 function CompanyDeptDialog({
-  dialog, companyDraft, departmentDraft, isMutatingAction,
+  dialog, companyDraft, departmentDraft, isBusy,
   setCompanyDraft, setDepartmentDraft, closeDialog,
-  submitAddCompany, submitEditCompany, submitToggleCompany, submitDeactivateCompany,
-  submitAddDepartment, submitEditDepartment, submitToggleDepartment, submitDeactivateDepartment,
+  submitCompanyForm, submitCompanyActive, submitDepartmentForm, submitDepartmentActive,
 }) {
   const kind = dialog?.kind;
 
@@ -684,13 +354,12 @@ function CompanyDeptDialog({
   }, [kind, dialog?.nextIsActive]);
 
   if (!kind) return null;
-  const isBusy = isMutatingAction;
 
   const submitMap = {
-    "add-company": submitAddCompany, "edit-company": submitEditCompany,
-    "toggle-company": submitToggleCompany, "deactivate-company": submitDeactivateCompany,
-    "add-department": submitAddDepartment, "edit-department": submitEditDepartment,
-    "toggle-department": submitToggleDepartment, "deactivate-department": submitDeactivateDepartment,
+    "add-company": submitCompanyForm, "edit-company": submitCompanyForm,
+    "toggle-company": submitCompanyActive, "deactivate-company": submitCompanyActive,
+    "add-department": submitDepartmentForm, "edit-department": submitDepartmentForm,
+    "toggle-department": submitDepartmentActive, "deactivate-department": submitDepartmentActive,
   };
 
   const fc = {
@@ -718,6 +387,11 @@ function CompanyDeptDialog({
     <Modal show onHide={closeDialog} title={dialogTitle} footer={footer}>
       {isCompanyForm ? (
         <div className="d-flex flex-column gap-3">
+          <div className="small text-muted">
+            {kind === "edit-company" && dialog?.target?.comp_code
+              ? <>Code <strong>{dialog.target.comp_code}</strong>, given automatically and can&apos;t be changed.</>
+              : "A company code is given automatically when you save."}
+          </div>
           <div>
             <label className="form-label mb-1">Company Name</label>
             <Input value={companyDraft.name} onChange={(e) => setCompanyDraft((p) => ({ ...p, name: e.target.value }))} placeholder="Enter company name" autoFocus />
@@ -736,12 +410,16 @@ function CompanyDeptDialog({
           </div>
         </div>
       ) : null}
-
-      {isDeptForm ? (
+{isDeptForm ? (
         <div className="d-flex flex-column gap-3">
           {kind === "add-department" ? (
             <div className="small text-muted">Creating department for <strong>{dialog?.target?.comp_name || "selected company"}</strong></div>
           ) : null}
+          <div className="small text-muted">
+            {kind === "edit-department" && dialog?.target?.dept_code
+              ? <>Code <strong>{dialog.target.dept_code}</strong>, given automatically and can&apos;t be changed.</>
+              : "A department code is given automatically when you save."}
+          </div>
           <div>
             <label className="form-label mb-1">Department Name</label>
             <Input value={departmentDraft.name} onChange={(e) => setDepartmentDraft((p) => ({ ...p, name: e.target.value }))} placeholder="Enter department name" autoFocus />
@@ -754,7 +432,10 @@ function CompanyDeptDialog({
       ) : null}
 
       {kind === "toggle-company" ? (
-        <p className="mb-0">{dialog?.nextIsActive ? "Enable" : "Disable"} company <strong>{dialog?.target?.comp_name || ""}</strong>?</p>
+        <p className="mb-0">
+          {dialog?.nextIsActive ? "Enable" : "Disable"} company <strong>{dialog?.target?.comp_name || ""}</strong>?
+          {dialog?.nextIsActive ? " Its departments stay inactive until you restore them one by one." : ""}
+        </p>
       ) : null}
 
       {kind === "toggle-department" ? (
@@ -771,19 +452,24 @@ function CompanyDeptDialog({
     </Modal>
   );
 }
-
 // ═══════════════════════════════════════════════════════════
 //  MAIN VIEW
 // ═══════════════════════════════════════════════════════════
 
 export default function CompanyDepartmentSetupView({ companies, departments, initialSelectedCompanyId, positions = [], users = [], ranks = [] }) {
-  const h = useCompanyDepartmentSetup({ companies, departments, initialSelectedCompanyId });
   const [org, setOrg] = useState({ positions, users, ranks });
   const [showRanks, setShowRanks] = useState(false);
 
   useEffect(() => {
     setOrg({ positions, users, ranks });
   }, [positions, users, ranks]);
+
+  const reloadOrg = useCallback(async () => {
+    const next = await loadOrgPositionsData();
+    setOrg({ positions: next?.positions || [], users: next?.users || [], ranks: next?.ranks || [] });
+  }, []);
+
+  const h = useCompanyDepartmentSetup({ companies, departments, initialSelectedCompanyId, onSeatsChanged: reloadOrg });
   const [positionModal, setPositionModal] = useState(null);
   const [isPositionBusy, setIsPositionBusy] = useState(false);
   // Flow selection: department (or COMPANY_LEVEL_KEY) and position inside the selected company.
@@ -796,28 +482,28 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
     setSelectedPositionId(null);
   }, [selectedCompanyId]);
 
-  const reloadOrg = useCallback(async () => {
-    const next = await loadOrgPositionsData();
-    setOrg({ positions: next?.positions || [], users: next?.users || [], ranks: next?.ranks || [] });
-  }, []);
-
   const companyPositions = useMemo(
     () => org.positions.filter((p) => isSameId(p?.comp_id, h.selectedCompany?.comp_id)),
     [h.selectedCompany?.comp_id, org.positions]);
-  const savedCompanyDepartments = useMemo(
-    () => (h.decoratedDepartments || []).filter((d) => !isTempDepartmentId(d?.dept_id)),
-    [h.decoratedDepartments]);
 
+  // Returns true when the change saved. Uses the fresh data the action sends
+  // back (one round trip); falls back to a reload for actions that don't.
   const runPositionChange = useCallback(async (work, message) => {
-    if (isPositionBusy) return;
+    if (isPositionBusy) return false;
     setIsPositionBusy(true);
     try {
       const result = await work();
       if (result && result.success === false) throw new Error(result.error || "Failed to update the position.");
-      await reloadOrg();
+      if (result?.org) {
+        setOrg({ positions: result.org.positions || [], users: result.org.users || [], ranks: result.org.ranks || [] });
+      } else {
+        await reloadOrg();
+      }
       toastSuccess(message, "Positions");
+      return true;
     } catch (error) {
       toastError(error?.message || "Failed to update the position.");
+      return false;
     } finally {
       setIsPositionBusy(false);
     }
@@ -828,36 +514,28 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
     setPositionModal(null);
     toastSuccess(message, "Positions");
   }, [reloadOrg]);
-
-  return (
+return (
     <main className="container-fluid py-4 px-3 px-lg-4">
-      <CompanyDeptHeader
-        hasPendingChanges={h.hasPendingChanges} pendingSummary={h.pendingSummary}
-        isSaving={h.isSaving} isMutatingAction={h.isMutatingAction}
-        handleSaveBatch={h.handleSaveBatch} handleCancelBatch={h.handleCancelBatch}
-        openAddCompanyDialog={h.openAddCompanyDialog}
-        onOpenRanks={() => setShowRanks(true)}
-      />
+      <CompanyDeptHeader isBusy={h.isBusy || isPositionBusy} onOpenRanks={() => setShowRanks(true)} />
 
       <OrgFlowSection
-        decoratedCompanies={h.decoratedCompanies} decoratedDepartments={h.decoratedDepartments}
+        decoratedCompanies={h.companies} decoratedDepartments={h.departments}
         selectedCompany={h.selectedCompany}
-        isSaving={h.isSaving} isMutatingAction={h.isMutatingAction}
-        pendingDeactivatedCompanyIds={h.pendingDeactivatedCompanyIds}
-        pendingDeactivatedDepartmentIds={h.pendingDeactivatedDepartmentIds}
+        isBusy={h.isBusy}
         onSelectCompany={h.handleCompanyRowClick}
         openAddCompanyDialog={h.openAddCompanyDialog}
         openEditCompanyDialog={h.openEditCompanyDialog}
         openToggleCompanyDialog={h.openToggleCompanyDialog}
         openDeactivateCompanyDialog={h.openDeactivateCompanyDialog}
-        stageHardDeleteCompany={h.stageHardDeleteCompany}
-        unstageHardDeleteCompany={h.unstageHardDeleteCompany}
+        deleteCompany={h.deleteCompany}
         openAddDepartmentDialog={h.openAddDepartmentDialog}
         openEditDepartmentDialog={h.openEditDepartmentDialog}
         openToggleDepartmentDialog={h.openToggleDepartmentDialog}
         openDeactivateDepartmentDialog={h.openDeactivateDepartmentDialog}
-        stageHardDeleteDepartment={h.stageHardDeleteDepartment}
-        unstageHardDeleteDepartment={h.unstageHardDeleteDepartment}
+        deleteDepartment={async (row) => {
+          const deleted = await h.deleteDepartment(row);
+          if (deleted && isSameId(selectedDeptKey, row?.dept_id)) { setSelectedDeptKey(null); setSelectedPositionId(null); }
+        }}
         allPositions={org.positions}
         companyPositions={companyPositions}
         isPositionBusy={isPositionBusy}
@@ -871,8 +549,11 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         onTogglePosition={(row, nextActive) => runPositionChange(
           () => setOrgPositionActiveAction(row.position_id, nextActive),
           nextActive ? "Position restored." : "Position deactivated.")}
-        onDeletePosition={(row) => runPositionChange(
-          () => deleteOrgPositionAction(row.position_id), "Position deleted.")}
+        onDeletePosition={async (row) => {
+          const deleted = await runPositionChange(
+            () => deleteOrgPositionAction(row.position_id), "Position deleted.");
+          if (deleted && isSameId(selectedPositionId, row.position_id)) setSelectedPositionId(null);
+        }}
         onMovePosition={(row, direction) => runPositionChange(
           () => moveOrgPositionAction(row.position_id, direction), "Order updated.")}
         onRemovePerson={(row, userId) => runPositionChange(
@@ -888,15 +569,12 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
           }),
           "Person removed.")}
       />
-
-      <CompanyDeptDialog
+<CompanyDeptDialog
         dialog={h.dialog} companyDraft={h.companyDraft} departmentDraft={h.departmentDraft}
-        isMutatingAction={h.isMutatingAction}
+        isBusy={h.isBusy}
         setCompanyDraft={h.setCompanyDraft} setDepartmentDraft={h.setDepartmentDraft} closeDialog={h.closeDialog}
-        submitAddCompany={h.submitAddCompany} submitEditCompany={h.submitEditCompany}
-        submitToggleCompany={h.submitToggleCompany} submitDeactivateCompany={h.submitDeactivateCompany}
-        submitAddDepartment={h.submitAddDepartment} submitEditDepartment={h.submitEditDepartment}
-        submitToggleDepartment={h.submitToggleDepartment} submitDeactivateDepartment={h.submitDeactivateDepartment}
+        submitCompanyForm={h.submitCompanyForm} submitCompanyActive={h.submitCompanyActive}
+        submitDepartmentForm={h.submitDepartmentForm} submitDepartmentActive={h.submitDepartmentActive}
       />
 
       {positionModal && h.selectedCompany ? (
@@ -904,7 +582,7 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
           key={String(positionModal.position?.position_id ?? "new")}
           company={h.selectedCompany}
           position={positionModal.position}
-          departments={savedCompanyDepartments}
+          departments={h.departments}
           positions={companyPositions}
           users={org.users}
           ranks={org.ranks}

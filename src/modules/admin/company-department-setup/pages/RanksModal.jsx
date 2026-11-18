@@ -54,9 +54,27 @@ export default function RanksModal({ show, ranks = [], onClose, onChanged }) {
     if (rank) await run(() => deleteRankAction(rank.rank_id), `Rank "${rank.rank_name}" deleted.`);
   };
 
+  if (!show) return null;
+
+  // One dialog at a time, each mounted only while it is open (a dialog left
+  // mounted and hidden can leave an invisible layer that blocks clicks).
+  if (confirmDelete) {
+    return (
+      <Modal show onHide={() => setConfirmDelete(null)} title="Delete Rank"
+        footer={(
+          <>
+            <Button type="button" variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+            <Button type="button" variant="danger" onClick={() => { void confirmAndDelete(); }}>Delete Rank</Button>
+          </>
+        )}>
+        <p className="mb-0">Permanently delete the rank &quot;{confirmDelete.rank_name}&quot;? This can&apos;t be undone.</p>
+      </Modal>
+    );
+  }
+
   return (
     <>
-      <Modal show={Boolean(show) && !confirmDelete} onHide={isBusy ? undefined : onClose} title="Ranks" size="lg"
+      <Modal show onHide={isBusy ? undefined : onClose} title="Ranks" size="lg"
         footer={<Button type="button" variant="ghost" onClick={onClose} disabled={isBusy}>Close</Button>}>
         <p className={styles.intro}>
           Ranks sort positions in lists and on the chart, top to bottom in this order. They are shared by every company. Changes save straight away.
@@ -128,16 +146,6 @@ export default function RanksModal({ show, ranks = [], onClose, onChanged }) {
           A disabled rank can&apos;t be picked for new positions; positions already using it keep it.
           A rank can only be deleted when no position uses it. New positions start on the ★ Default rank.
         </p>
-      </Modal>
-
-      <Modal show={Boolean(confirmDelete)} onHide={() => setConfirmDelete(null)} title="Delete Rank"
-        footer={(
-          <>
-            <Button type="button" variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button>
-            <Button type="button" variant="danger" onClick={() => { void confirmAndDelete(); }}>Delete Rank</Button>
-          </>
-        )}>
-        <p className="mb-0">Permanently delete the rank &quot;{confirmDelete?.rank_name}&quot;? This can&apos;t be undone.</p>
       </Modal>
     </>
   );

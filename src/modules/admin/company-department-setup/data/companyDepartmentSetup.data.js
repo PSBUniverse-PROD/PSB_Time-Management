@@ -1,10 +1,8 @@
 /**
  * Company Department Setup — Data Layer (client-safe utilities)
  *
- * Model helpers, batch state management, and batch save orchestration.
+ * Model helpers and small utilities (client-safe).
  */
-
-import { saveCompanyDepartmentBatch } from "./companyDepartmentSetup.actions.js";
 
 // ─── MODEL HELPERS ─────────────────────────────────────────
 
@@ -67,68 +65,6 @@ export function compareText(l, r) {
 
 export function normalizeText(value) { return String(value ?? "").trim(); }
 
-export function removeObjectKey(obj, key) {
-  const k = String(key ?? "");
-  const next = {};
-  Object.entries(obj || {}).forEach(([k2, v]) => { if (k2 !== k) next[k2] = v; });
-  return next;
-}
-
-export function mergeUpdatePatch(prev, patch) {
-  const m = { ...(prev || {}) };
-  Object.entries(patch || {}).forEach(([k, v]) => { if (v !== undefined) m[k] = v; });
-  return m;
-}
-
-export function appendUniqueId(list, value) {
-  const v = String(value ?? "");
-  if (!v) return Array.isArray(list) ? [...list] : [];
-  const arr = Array.isArray(list) ? list : [];
-  if (arr.some((e) => isSameId(e, v))) return [...arr];
-  return [...arr, v];
-}
-
-// ─── CONSTANTS & BATCH STATE ───────────────────────────────
+// ─── CONSTANTS ─────────────────────────────────────────────
 
 export const EMPTY_DIALOG = { kind: null, target: null, nextIsActive: null };
-export const TEMP_COMPANY_PREFIX = "tmp-company-";
-export const TEMP_DEPARTMENT_PREFIX = "tmp-department-";
-
-export function createTempId(prefix) {
-  return `${prefix}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function isTempCompanyId(v) { return String(v ?? "").startsWith(TEMP_COMPANY_PREFIX); }
-export function isTempDepartmentId(v) { return String(v ?? "").startsWith(TEMP_DEPARTMENT_PREFIX); }
-
-export function createEmptyCompanyChanges() { return { creates: [], updates: {}, deactivations: [], hardDeletes: [] }; }
-export function createEmptyDepartmentChanges() { return { creates: [], updates: {}, deactivations: [], hardDeletes: [] }; }
-
-export function remapDepartmentsByCompanyId(departments, companyIdMap) {
-  return (Array.isArray(departments) ? departments : []).map((d, i) => {
-    const sourceId = d?.comp_id;
-    const nextId = companyIdMap.get(String(sourceId ?? "")) ?? sourceId;
-    return mapDepartmentRow({ ...d, comp_id: nextId }, i);
-  });
-}
-
-// ─── BATCH SAVE (calls Server Actions) ─────────────────────
-
-export async function executeBatchSave(companyChanges, departmentChanges, orderedCompanies, selectedCompanyId) {
-  const result = await saveCompanyDepartmentBatch(companyChanges, departmentChanges);
-  const companyIdMap = new Map(Object.entries(result?.companyIdMap || {}));
-  const deactivatedCompanySet = new Set(
-    [...(companyChanges.deactivations || []), ...(companyChanges.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  const orderedPersistedCompanyIds = orderedCompanies
-    .map((c) => companyIdMap.get(String(c?.comp_id ?? "")) ?? c?.comp_id)
-    .filter((id) => id != null && id !== "")
-    .filter((id) => !deactivatedCompanySet.has(String(id)) && !isTempCompanyId(id));
-
-  const selectedResolved = companyIdMap.get(String(selectedCompanyId ?? "")) ?? selectedCompanyId ?? null;
-  const nextSelectedCompanyId = selectedResolved && !deactivatedCompanySet.has(String(selectedResolved)) && !isTempCompanyId(selectedResolved)
-    ? selectedResolved : (orderedPersistedCompanyIds[0] ?? null);
-
-  return { companyIdMap, nextSelectedCompanyId };
-}

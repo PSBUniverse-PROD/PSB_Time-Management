@@ -15,6 +15,17 @@ function hasOwn(source, key) {
   return Object.prototype.hasOwnProperty.call(source || {}, key);
 }
 
+// Postgres 23503 = the row is still used by another table (a foreign key).
+// The last `on table "…"` in the message names the table that uses it.
+function inUseError(error, what, fallback) {
+  if (error?.code === "23503") {
+    const tables = [...String(error.message || "").matchAll(/on table "([^"]+)"/g)].map((m) => m[1]);
+    const usedBy = tables.length > 1 ? tables[tables.length - 1] : "";
+    return new Error(`${what} is still used${usedBy ? ` in ${usedBy}` : " by other records"}, so it can't be deleted. Deactivate it instead.`);
+  }
+  return new Error(error?.message || fallback);
+}
+
 // ─── Load data ─────────────────────────────────────────────
 
 export async function loadCompanyDepartmentSetupData() {
@@ -37,8 +48,7 @@ export async function loadCompanyDepartmentSetupData() {
 
 // ─── Company Actions ───────────────────────────────────────
 
-export async function createCompanyAction(payload) {
-  await requireOrgEditor();
+async function createCompany(payload) {
   const supabase = getSupabaseAdmin();
   const compName = normalizeText(payload?.comp_name);
   if (!compName) throw new Error("Company name is required.");
@@ -57,8 +67,7 @@ export async function createCompanyAction(payload) {
   return data;
 }
 
-export async function updateCompanyAction(companyId, updates) {
-  await requireOrgEditor();
+async function updateCompany(companyId, updates) {
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
   const patch = {};
@@ -79,39 +88,53 @@ export async function updateCompanyAction(companyId, updates) {
   return data;
 }
 
-export async function deactivateCompanyAction(companyId) {
-  await requireOrgEditor();
+async function deactivateCompany(companyId) {
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
 
-  // Cascade deactivate linked departments (all in one query)
-  await supabase.from("psb_s_department").update({ is_active: false }).eq("comp_id", companyId);
+  // Its departments are deactivated with it (all in one query).
+  const { error: deptError } = await supabase.from("psb_s_department").update({ is_active: false }).eq("comp_id", companyId);
+  if (deptError) throw new Error(deptError.message || "Failed to deactivate the company's departments");
 
   const { data, error } = await supabase.from("psb_s_company").update({ is_active: false }).eq("comp_id", companyId).select("*").single();
   if (error) throw new Error(error.message || "Failed to deactivate company");
   return data;
 }
 
-export async function hardDeleteCompanyAction(companyId) {
-  await requireOrgEditor();
+// Positions are never deleted together with a company or department: the admin
+// deletes or moves them first (or deactivates instead).
+async function countPositions(column, id) {
+  const { count, error } = await getSupabaseAdmin().from("psb_s_position")
+    .select("position_id", { count: "exact", head: true }).eq(column, id);
+  if (error) throw new Error(error.message || "Failed to check positions");
+  return count || 0;
+}
+
+async function hardDeleteCompany(companyId) {
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
 
-  // Cascade delete linked departments (counted first for the reply, then deleted in one query)
-  const { data: linkedDepts } = await supabase.from("psb_s_department").select("dept_id").eq("comp_id", companyId);
-  if ((linkedDepts || []).length > 0) {
-    await supabase.from("psb_s_department").delete().eq("comp_id", companyId);
+  const positionCount = await countPositions("comp_id", companyId);
+  if (positionCount > 0) {
+    throw new Error(`This company still has ${positionCount} position(s). Delete them first, or deactivate the company instead.`);
+  }
+
+  // Departments are deleted one by one first (each delete is all-or-nothing),
+  // so a company delete that fails never leaves the company half removed.
+  const { count: deptCount, error: deptError } = await supabase.from("psb_s_department")
+    .select("dept_id", { count: "exact", head: true }).eq("comp_id", companyId);
+  if (deptError) throw new Error(deptError.message || "Failed to check departments");
+  if (deptCount > 0) {
+    throw new Error(`This company still has ${deptCount} department(s). Delete them first, or deactivate the company instead.`);
   }
 
   const { error } = await supabase.from("psb_s_company").delete().eq("comp_id", companyId);
-  if (error) throw new Error(error.message || "Failed to permanently delete company");
-  return { companyId, deletedDepartmentCount: (linkedDepts || []).length, permanentlyDeleted: true };
+  if (error) throw inUseError(error, "This company", "Failed to permanently delete company");
 }
 
 // ─── Department Actions ────────────────────────────────────
 
-export async function createDepartmentAction(payload) {
-  await requireOrgEditor();
+async function createDepartment(payload) {
   const supabase = getSupabaseAdmin();
   const deptName = normalizeText(payload?.dept_name);
   if (!deptName) throw new Error("Department name is required.");
@@ -131,8 +154,7 @@ export async function createDepartmentAction(payload) {
   return data;
 }
 
-export async function updateDepartmentAction(departmentId, updates) {
-  await requireOrgEditor();
+async function updateDepartment(departmentId, updates) {
   if (departmentId == null || departmentId === "") throw new Error("Department ID is required.");
   const supabase = getSupabaseAdmin();
   const patch = {};
@@ -151,8 +173,7 @@ export async function updateDepartmentAction(departmentId, updates) {
   return data;
 }
 
-export async function deactivateDepartmentAction(departmentId) {
-  await requireOrgEditor();
+async function deactivateDepartment(departmentId) {
   if (departmentId == null || departmentId === "") throw new Error("Department ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -161,99 +182,109 @@ export async function deactivateDepartmentAction(departmentId) {
   return data;
 }
 
-export async function hardDeleteDepartmentAction(departmentId) {
-  await requireOrgEditor();
+async function hardDeleteDepartment(departmentId) {
   if (departmentId == null || departmentId === "") throw new Error("Department ID is required.");
   const supabase = getSupabaseAdmin();
 
+  const positionCount = await countPositions("dept_id", departmentId);
+  if (positionCount > 0) {
+    throw new Error(`This department still has ${positionCount} position(s). Delete or move them first, or deactivate the department instead.`);
+  }
+
   const { error } = await supabase.from("psb_s_department").delete().eq("dept_id", departmentId);
-  if (error) throw new Error(error.message || "Failed to permanently delete department");
+  if (error) throw inUseError(error, "This department", "Failed to permanently delete department");
   return { departmentId, permanentlyDeleted: true };
 }
 
-// ─── Batch save ────────────────────────────────────────────
+// ─── Companies and departments: save straight away ─────────
+// Each change is saved the moment the admin confirms it (there is no Save
+// Batch). The exported actions return { success, error } through
+// toPositionResult (below), which also checks access. Deactivating or
+// restoring can close or reopen people's seats, so those refresh the seats of
+// everyone seated in that company or department.
 
-// Same prefixes as TEMP_COMPANY_PREFIX / TEMP_DEPARTMENT_PREFIX in companyDepartmentSetup.data.js.
-const TEMP_COMPANY_ID_PREFIX = "tmp-company-";
-const TEMP_DEPARTMENT_ID_PREFIX = "tmp-department-";
-
-/**
- * Saves a whole staged batch in ONE call from the browser (it used to be one
- * call per change). Same step order as before: company creates → company
- * edits → company deactivations → department creates → department edits →
- * department deactivations → department deletes → company deletes. The items
- * of each step run together. Returns { companyIdMap: { tempId: newId } }.
- */
-export async function saveCompanyDepartmentBatch(companyChanges, departmentChanges) {
-  await requireOrgEditor();
-  const companies = companyChanges || {};
-  const departments = departmentChanges || {};
-  const companyIdMap = {};
-  const isTempCompany = (id) => String(id ?? "").startsWith(TEMP_COMPANY_ID_PREFIX);
-  const isTempDepartment = (id) => String(id ?? "").startsWith(TEMP_DEPARTMENT_ID_PREFIX);
-  const resolveCompanyId = (id) => companyIdMap[String(id ?? "")] ?? id;
-  const deactivatedCompanySet = new Set(
-    [...(companies.deactivations || []), ...(companies.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-  const deactivatedDepartmentSet = new Set(
-    [...(departments.deactivations || []), ...(departments.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  // People seated in a company or department this batch touches. Read before
-  // the changes (a delete may remove their seats), refreshed after them.
-  const touchedCompanyIds = [
-    ...Object.keys(companies.updates || {}), ...(companies.deactivations || []), ...(companies.hardDeletes || []),
-  ].filter((id) => !isTempCompany(id)).map(toIdOrNull).filter((id) => id != null);
-  const touchedDepartmentIds = [
-    ...Object.keys(departments.updates || {}), ...(departments.deactivations || []), ...(departments.hardDeletes || []),
-  ].filter((id) => !isTempDepartment(id)).map(toIdOrNull).filter((id) => id != null);
-  const seatedUserIds = await seatedUsersIn(touchedCompanyIds, touchedDepartmentIds);
-
-  await Promise.all((companies.creates || []).map(async (entry) => {
-    const created = await createCompanyAction(entry.payload);
-    const id = created?.comp_id;
-    if (id == null || id === "") throw new Error("Created company response is invalid.");
-    companyIdMap[String(entry.tempId)] = id;
-  }));
-
-  await Promise.all(Object.entries(companies.updates || {}).map(async ([companyId, updates]) => {
-    const resolved = resolveCompanyId(companyId);
-    if (deactivatedCompanySet.has(String(resolved)) || isTempCompany(resolved)) return;
-    if (Object.keys(updates || {}).length === 0) return;
-    await updateCompanyAction(resolved, updates);
-  }));
-
-  await Promise.all((companies.deactivations || []).map(async (companyId) => {
-    const resolved = resolveCompanyId(companyId);
-    if (isTempCompany(resolved)) return;
-    await deactivateCompanyAction(resolved);
-  }));
-
-  await Promise.all((departments.creates || []).map(async (entry) => {
-    const resolved = resolveCompanyId(entry?.payload?.comp_id);
-    if (!resolved || deactivatedCompanySet.has(String(resolved))) return;
-    if (isTempCompany(resolved)) throw new Error("Save company batch first before saving departments for a newly created company.");
-    await createDepartmentAction({ ...entry.payload, comp_id: resolved });
-  }));
-
-  await Promise.all(Object.entries(departments.updates || {}).map(async ([deptId, updates]) => {
-    if (deactivatedDepartmentSet.has(String(deptId)) || isTempDepartment(deptId)) return;
-    if (Object.keys(updates || {}).length === 0) return;
-    await updateDepartmentAction(deptId, updates);
-  }));
-
-  await Promise.all((departments.deactivations || []).filter((id) => !isTempDepartment(id)).map((id) => deactivateDepartmentAction(id)));
-  await Promise.all((departments.hardDeletes || []).filter((id) => !isTempDepartment(id)).map((id) => hardDeleteDepartmentAction(id)));
-
-  await Promise.all((companies.hardDeletes || []).map(async (companyId) => {
-    const resolved = resolveCompanyId(companyId);
-    if (isTempCompany(resolved)) return;
-    await hardDeleteCompanyAction(resolved);
-  }));
-
+async function refreshSeatsAround(companyIds, departmentIds, work) {
+  // Read before the change, refresh after it.
+  const seatedUserIds = await seatedUsersIn(companyIds, departmentIds);
+  const result = await work();
   await refreshUserSeats(getSupabaseAdmin(), seatedUserIds);
+  return result;
+}
 
-  return { companyIdMap };
+function requireId(value, label) {
+  const id = toIdOrNull(value);
+  if (id == null) throw new Error(`${label} ID is required.`);
+  return id;
+}
+
+// No comp_id → add a new company; otherwise edit it.
+async function saveCompany(input) {
+  const fields = {
+    comp_name: input?.comp_name,
+    comp_short_name: input?.comp_short_name,
+    comp_email: input?.comp_email,
+    comp_phone: input?.comp_phone,
+  };
+  const companyId = toIdOrNull(input?.comp_id);
+  const company = companyId == null
+    ? await createCompany({ ...fields, is_active: true })
+    : await updateCompany(companyId, fields);
+  return { company };
+}
+
+// Deactivating also deactivates its departments; restoring brings back only the company.
+async function setCompanyActive(companyId, isActive) {
+  const id = requireId(companyId, "Company");
+  const company = await refreshSeatsAround([id], [], () => (isActive
+    ? updateCompany(id, { is_active: true })
+    : deactivateCompany(id)));
+  return { company };
+}
+
+// No dept_id → add a new department to comp_id; otherwise edit it.
+async function saveDepartment(input) {
+  const fields = { dept_name: input?.dept_name, dept_short_name: input?.dept_short_name };
+  const departmentId = toIdOrNull(input?.dept_id);
+  const department = departmentId == null
+    ? await createDepartment({ ...fields, comp_id: requireId(input?.comp_id, "Company"), is_active: true })
+    : await updateDepartment(departmentId, fields);
+  return { department };
+}
+
+async function setDepartmentActive(departmentId, isActive) {
+  const id = requireId(departmentId, "Department");
+  const department = await refreshSeatsAround([], [id], () => (isActive
+    ? updateDepartment(id, { is_active: true })
+    : deactivateDepartment(id)));
+  return { department };
+}
+
+export async function saveCompanyAction(input) {
+  return toPositionResult(() => saveCompany(input), "Failed to save the company.");
+}
+
+export async function setCompanyActiveAction(companyId, isActive) {
+  return toPositionResult(() => setCompanyActive(companyId, isActive), "Failed to update the company.");
+}
+
+export async function deleteCompanyAction(companyId) {
+  return toPositionResult(async () => {
+    await hardDeleteCompany(requireId(companyId, "Company"));
+  }, "Failed to delete the company.");
+}
+
+export async function saveDepartmentAction(input) {
+  return toPositionResult(() => saveDepartment(input), "Failed to save the department.");
+}
+
+export async function setDepartmentActiveAction(departmentId, isActive) {
+  return toPositionResult(() => setDepartmentActive(departmentId, isActive), "Failed to update the department.");
+}
+
+export async function deleteDepartmentAction(departmentId) {
+  return toPositionResult(async () => {
+    await hardDeleteDepartment(requireId(departmentId, "Department"));
+  }, "Failed to delete the department.");
 }
 
 // User ids holding a seat in any position of these companies or departments.
@@ -277,7 +308,7 @@ async function seatedUsersIn(companyIds, departmentIds) {
 // optionally at a branch). It reports to one or more positions of the same
 // company (psb_m_positionreport) and is held by one or more users
 // (psb_m_userposition). The org chart is drawn from these tables. Positions
-// save straight away (they are not part of the company/department Save Batch).
+// save straight away, like companies and departments.
 
 function toIdOrNull(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -293,6 +324,11 @@ function userDisplayName(user) {
 /** Every position with its reporting lines and holders, plus active users for the people picker. */
 export async function loadOrgPositionsData() {
   await requireOrgEditor();
+  return readOrgPositionsData();
+}
+
+// Same data without the access check, for actions that already checked it.
+async function readOrgPositionsData() {
   const supabase = getSupabaseAdmin();
   const [positionsRes, reportsRes, holdersRes, usersRes, ranksRes] = await Promise.all([
     supabase.from("psb_s_position").select("*")
@@ -548,12 +584,19 @@ export async function saveOrgPositionAction(input) {
   return toPositionResult(() => saveOrgPosition(input), "Failed to save the position.");
 }
 
+// Position changes send back the fresh positions, users and ranks as `org` in
+// the same call, so the screen updates without a second round trip.
+async function withOrg(work) {
+  await work();
+  return { org: await readOrgPositionsData() };
+}
+
 export async function setOrgPositionActiveAction(positionId, isActive) {
-  return toPositionResult(() => setOrgPositionActive(positionId, isActive), "Failed to update the position.");
+  return toPositionResult(() => withOrg(() => setOrgPositionActive(positionId, isActive)), "Failed to update the position.");
 }
 
 export async function deleteOrgPositionAction(positionId) {
-  return toPositionResult(() => deleteOrgPosition(positionId), "Failed to delete the position.");
+  return toPositionResult(() => withOrg(() => deleteOrgPosition(positionId)), "Failed to delete the position.");
 }
 
 // ─── Position order inside a group ─────────────────────────
@@ -620,7 +663,7 @@ async function moveOrgPosition(positionId, direction) {
 }
 
 export async function moveOrgPositionAction(positionId, direction) {
-  return toPositionResult(() => moveOrgPosition(positionId, direction), "Failed to change the order.");
+  return toPositionResult(() => withOrg(() => moveOrgPosition(positionId, direction)), "Failed to change the order.");
 }
 
 // ─── Ranks (psb_s_rank) ────────────────────────────────────
